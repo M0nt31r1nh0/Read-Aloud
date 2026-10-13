@@ -1,0 +1,196 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [6 0 R 8 0 R 10 0 R 12 0 R] /Count 4 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Times-Roman /Encoding /WinAnsiEncoding >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Times-Bold /Encoding /WinAnsiEncoding >>
+endobj
+5 0 obj
+<< /Length 2650 >>
+stream
+BT /F1 8 Tf 1 0 0 1 241.20 760 Tm (Journal of Imaginary Results, Vol. 3) Tj ET
+BT /F2 16 Tf 1 0 0 1 154.80 720 Tm (Column-Aware Reading Order for Spoken PDFs) Tj ET
+BT /F1 7 Tf 1 0 0 1 286.00 702 Tm (1) Tj ET
+BT /F1 11 Tf 1 0 0 1 240.00 698 Tm (A. Author) Tj ET
+BT /F1 11 Tf 1 0 0 1 297.00 698 Tm (and B. Writer) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 670 Tm (Abstract. We describe a reader that speaks two-column papers in the order a person would read them and removes) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 658 Tm (line-end hyphens without breaking real compounds such as the phrase two-) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 646 Tm (column layout. Footnote markers and citation brackets are skipped so that every word is pronounced correctly.) Tj ET
+BT /F2 12 Tf 1 0 0 1 54.00 610 Tm (1 Introduction) Tj ET
+BT /F1 10 Tf 1 0 0 1 318.00 610 Tm (and the highlighted word stays on the page.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 594 Tm (Reading aloud scientific papers is hard because) Tj ET
+BT /F2 12 Tf 1 0 0 1 318.00 586 Tm (2 Method) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 582 Tm (text is laid out in two columns and words are fre-) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 570 Tm (quently hyphenated at the end of a line [3]. A) Tj ET
+BT /F1 10 Tf 1 0 0 1 318.00 570 Tm (Each page is cut into horizontal slabs. Slabs that) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 558 Tm (naive reader follows the content stream order and) Tj ET
+BT /F1 10 Tf 1 0 0 1 318.00 558 Tm (share a vertical gutter are merged again, which) Tj ET
+BT /F1 6 Tf 1 0 0 1 167.00 550 Tm (1) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 546 Tm (jumps between the columns.) Tj ET
+BT /F1 10 Tf 1 0 0 1 318.00 546 Tm (avoids the classic XY-cut mistake.) Tj ET
+BT /F1 10 Tf 1 0 0 1 64.00 522 Tm (We group lines into columns first, as shown in) Tj ET
+BT /F1 10 Tf 1 0 0 1 328.00 522 Tm (Columns are then read top to bottom, left to) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 510 Tm (Fig. 2, and only then build paragraphs. Hyphen-) Tj ET
+BT /F1 10 Tf 1 0 0 1 318.00 510 Tm (right. Footnote markers and citation brackets) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 498 Tm (ated words such as state-of-the-art keep their) Tj ET
+BT /F1 10 Tf 1 0 0 1 318.00 498 Tm (are skipped, and abbreviations like Eq. 4 are) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 486 Tm (inner hyphens, while line-end hyphens are re-) Tj ET
+BT /F1 10 Tf 1 0 0 1 318.00 486 Tm (expanded before the text is sent to the speech syn-) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 474 Tm (moved so the voice says each word correctly) Tj ET
+BT /F1 5 Tf 1 0 0 1 54.00 94 Tm (1) Tj ET
+BT /F1 8 Tf 1 0 0 1 58.00 90 Tm (A footnote that should be read after the body.) Tj ET
+BT /F1 10 Tf 1 0 0 1 303.00 40 Tm (1) Tj ET
+endstream
+endobj
+6 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents 5 0 R >>
+endobj
+7 0 obj
+<< /Length 1073 >>
+stream
+BT /F1 8 Tf 1 0 0 1 241.20 760 Tm (Journal of Imaginary Results, Vol. 3) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 720 Tm (thesizer. The result is one paragraph per reading) Tj ET
+BT /F1 10 Tf 1 0 0 1 318.00 720 Tm (Future work will handle tables and figures that) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 708 Tm (unit, with sentences spoken one at a time.) Tj ET
+BT /F1 10 Tf 1 0 0 1 318.00 708 Tm (span both columns of the page, because a figure) Tj ET
+BT /F1 8 Tf 1 0 0 1 318.00 688 Tm (Figure 3: A caption placed inside the paragraph.) Tj ET
+BT /F2 12 Tf 1 0 0 1 54.00 684 Tm (3 Results) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 668 Tm (The reading order was correct for all pages. We) Tj ET
+BT /F1 10 Tf 1 0 0 1 318.00 668 Tm (interrupts the text flow. +e same holds for tables.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 656 Tm (used the e-mail corpus from Smith et al. and the) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 644 Tm (pre-processing steps [4, 7].) Tj ET
+BT /F1 10 Tf 1 0 0 1 378.00 644 Tm (x = a + b) Tj ET
+BT /F1 11 Tf 1 0 0 1 538.00 644 Tm (\(1\)) Tj ET
+BT /F1 10 Tf 1 0 0 1 303.00 40 Tm (2) Tj ET
+endstream
+endobj
+8 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents 7 0 R >>
+endobj
+9 0 obj
+<< /Length 2283 >>
+stream
+BT /F1 8 Tf 1 0 0 1 241.20 760 Tm (Journal of Imaginary Results, Vol. 3) Tj ET
+BT /F2 10 Tf 1 0 0 1 54.00 720 Tm (4.2.1) Tj ET
+BT /F2 10 Tf 1 0 0 1 88.00 720 Tm (Scalability) Tj ET
+BT /F2 12 Tf 1 0 0 1 318.00 720 Tm (References) Tj ET
+BT /F1 8 Tf 1 0 0 1 143.00 708 Tm (5 minutes) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 704 Tm (The tool can support) Tj ET
+BT /F1 10 Tf 1 0 0 1 181.00 704 Tm (= 8.8 times more jobs.) Tj ET
+BT /F1 8 Tf 1 0 0 1 141.00 700 Tm (34 seconds) Tj ET
+BT /F1 10 Tf 1 0 0 1 318.00 700 Tm ([1] AWS Regions, 2023.) Tj ET
+BT /F1 10 Tf 1 0 0 1 339.00 688 Tm (https://aws.amazon.com/about-) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 680 Tm (1. Each region has sufficient storage space for the) Tj ET
+BT /F1 10 Tf 1 0 0 1 339.00 676 Tm (aws/global-infrastructure/.) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 668 Tm (tables it stores \(Expression 4\).) Tj ET
+BT /F1 10 Tf 1 0 0 1 318.00 660 Tm ([2] Kay Ousterhout and Ion Stoica. Sparrow:) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 656 Tm (2. Short item.) Tj ET
+BT /F1 10 Tf 1 0 0 1 339.00 648 Tm (Distributed, Low Latency Scheduling. In SOSP,) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 640 Tm (The load is defined as follows:) Tj ET
+BT /F1 10 Tf 1 0 0 1 339.00 636 Tm (2013.) Tj ET
+BT /F1 10 Tf 1 0 0 1 114.00 622 Tm (L = a + b \(12\)) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 606 Tm (where a is the arrival rate.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 590 Tm (Measurements were taken every hour and) Tj ET
+BT /F1 7 Tf 1 0 0 1 64.00 560 Tm (100%) Tj ET
+BT /F1 7 Tf 1 0 0 1 134.00 545 Tm (Time \(hours\)) Tj ET
+BT /F1 9 Tf 1 0 0 1 74.00 520 Tm (Figure 5: Load over time.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 500 Tm (averaged over two weeks.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 484 Tm (Prior systems [7, 8,) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 472 Tm (12] read in stream order.) Tj ET
+BT /F1 9 Tf 1 0 0 1 54.00 440 Tm (Table 1: Results per voice.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 424 Tm (Voice) Tj ET
+BT /F1 10 Tf 1 0 0 1 174.00 424 Tm (Errors) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 412 Tm (Samantha) Tj ET
+BT /F1 10 Tf 1 0 0 1 174.00 412 Tm (3) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 400 Tm (Ava \(online\)) Tj ET
+BT /F1 10 Tf 1 0 0 1 174.00 400 Tm (0) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 376 Tm (The online voice made no errors [3,2,1,44,55].) Tj ET
+BT /F1 10 Tf 1 0 0 1 303.00 40 Tm (3) Tj ET
+endstream
+endobj
+10 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents 9 0 R >>
+endobj
+11 0 obj
+<< /Length 2532 >>
+stream
+BT /F1 8 Tf 1 0 0 1 241.20 760 Tm (Journal of Imaginary Results, Vol. 3) Tj ET
+BT /F2 12 Tf 1 0 0 1 54.00 724 Tm (Appendix) Tj ET
+BT /F1 9 Tf 1 0 0 1 318.00 720 Tm (Table 3: Related work.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 708 Tm (Two more tables follow.) Tj ET
+BT /F1 9 Tf 1 0 0 1 318.00 702 Tm (Work) Tj ET
+BT /F1 9 Tf 1 0 0 1 398.00 702 Tm (Comment) Tj ET
+BT /F1 9 Tf 1 0 0 1 54.00 700 Tm (Table 2: Design space.) Tj ET
+BT /F1 9 Tf 1 0 0 1 398.00 688 Tm (Covers columns but) Tj ET
+BT /F1 9 Tf 1 0 0 1 318.00 683 Tm (Smith et al.) Tj ET
+BT /F1 9 Tf 1 0 0 1 172.00 681 Tm (Queue scope) Tj ET
+BT /F1 9 Tf 1 0 0 1 398.00 678 Tm (ignores hyphens.) Tj ET
+BT /F1 9 Tf 1 0 0 1 160.00 669 Tm (Local) Tj ET
+BT /F1 9 Tf 1 0 0 1 210.00 669 Tm (Global) Tj ET
+BT /F1 9 Tf 1 0 0 1 398.00 666 Tm (Reads tables) Tj ET
+BT /F1 9 Tf 1 0 0 1 58.00 656 Tm (Resource) Tj ET
+BT /F1 9 Tf 1 0 0 1 154.00 656 Tm (\(1\) Borg,) Tj ET
+BT /F1 9 Tf 1 0 0 1 318.00 656 Tm (Lee [4]) Tj ET
+BT /F1 9 Tf 1 0 0 1 398.00 656 Tm (row by row) Tj ET
+BT /F1 9 Tf 1 0 0 1 114.00 651 Tm (Local) Tj ET
+BT /F1 9 Tf 1 0 0 1 204.00 651 Tm (\(2\)) Tj ET
+BT /F1 9 Tf 1 0 0 1 58.00 646 Tm (scope) Tj ET
+BT /F1 9 Tf 1 0 0 1 154.00 646 Tm (Hydra) Tj ET
+BT /F1 9 Tf 1 0 0 1 398.00 646 Tm (without headers.) Tj ET
+BT /F1 9 Tf 1 0 0 1 114.00 633 Tm (Global) Tj ET
+BT /F1 9 Tf 1 0 0 1 154.00 633 Tm (\(3\) none) Tj ET
+BT /F1 9 Tf 1 0 0 1 204.00 633 Tm (\(4\) Ideal) Tj ET
+BT /F1 10 Tf 1 0 0 1 318.00 620 Tm (Both tables are read with their column names.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 610 Tm (The table has headers. A grid is rebuilt from) Tj ET
+BT /F1 10 Tf 1 0 0 1 318.00 608 Tm (Without vertical rules, columns are found from) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 598 Tm (the ruling lines, so a label spanning two rows) Tj ET
+BT /F1 10 Tf 1 0 0 1 318.00 596 Tm (the white space between them, and each wrapped) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 586 Tm (and a cell written on two lines are both read) Tj ET
+BT /F1 10 Tf 1 0 0 1 318.00 584 Tm (cell is given to the nearest row label.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 574 Tm (once, in the right place.) Tj ET
+BT /F1 10 Tf 1 0 0 1 303.00 40 Tm (4) Tj ET
+0.4 w 150 690 m 250 690 l S
+0.4 w 150 678 m 250 678 l S
+0.4 w 54 666 m 250 666 l S
+0.4 w 110 642 m 250 642 l S
+0.4 w 54 630 m 250 630 l S
+0.4 w 150 666 m 150 690 l S
+0.4 w 250 630 m 250 690 l S
+0.4 w 200 630 m 200 678 l S
+0.4 w 54 630 m 54 666 l S
+0.4 w 110 630 m 110 666 l S
+0.4 w 150 630 m 150 666 l S
+0.4 w 318 712 m 558 712 l S
+0.4 w 318 697 m 558 697 l S
+0.4 w 318 640 m 558 640 l S
+endstream
+endobj
+12 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents 11 0 R >>
+endobj
+xref
+0 13
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000135 00000 n 
+0000000234 00000 n 
+0000000332 00000 n 
+0000003034 00000 n 
+0000003170 00000 n 
+0000004295 00000 n 
+0000004431 00000 n 
+0000006766 00000 n 
+0000006903 00000 n 
+0000009488 00000 n 
+trailer
+<< /Size 13 /Root 1 0 R >>
+startxref
+9626
+%%EOF

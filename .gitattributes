@@ -1,0 +1,5 @@
+# Normalise text to LF in the repository; check out with the platform's
+# native line endings. Binary files are never converted.
+* text=auto
+*.pdf binary
+*.png binary

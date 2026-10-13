@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PDF Read Aloud</title>
+  </head>
+  <body>
+    <header class="toolbar">
+      <button id="open" type="button" title="Open a PDF (or drop one on the page)">Open PDF</button>
+      <input id="file" type="file" accept="application/pdf,.pdf" hidden />
+      <span class="divider"></span>
+      <button id="prev" type="button" title="Previous sentence (←)" aria-label="Previous sentence">⏮</button>
+      <button id="play" type="button" class="primary" title="Read aloud (Space)">Play</button>
+      <button id="next" type="button" title="Next sentence (→)" aria-label="Next sentence">⏭</button>
+      <button id="stop" type="button" title="Stop">Stop</button>
+      <span class="divider"></span>
+      <label>Speed <input id="rate" type="range" min="0.5" max="2" step="0.1" value="1" /> <output id="rate-value">1.0×</output></label>
+      <select id="voice" aria-label="Voice"></select>
+      <span class="divider"></span>
+      <div class="filters">
+        <button id="filters-button" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="filters-panel">
+          Filters <span aria-hidden="true">▾</span>
+        </button>
+        <div id="filters-panel" class="filters-panel" role="group" aria-label="Filters" hidden>
+          <label><input id="opt-layout" type="checkbox" /> Show layout</label>
+          <hr />
+          <label title="Reference numbers such as [3] or [3,2,1,44,55]"><input id="opt-citations" type="checkbox" checked /> Skip citations</label>
+          <label title="Text under figures and above tables (Figure 3: …)"><input id="opt-captions" type="checkbox" /> Skip captions</label>
+          <label title="Read table cells, with their headers, when unchecked"><input id="opt-tables" type="checkbox" checked /> Skip tables</label>
+          <hr />
+          <label><input id="opt-abbrev" type="checkbox" checked /> Expand abbreviations</label>
+          <label><input id="opt-footnotes" type="checkbox" checked /> Read footnotes</label>
+          <label><input id="opt-equations" type="checkbox" /> Read equations as text</label>
+        </div>
+      </div>
+      <span id="status" class="status">Open a PDF or drop one on the page.</span>
+    </header>
+    <main>
+      <section id="pages" aria-label="Document"></section>
+      <aside id="transcript" aria-label="Reading order"></aside>
+    </main>
+    <script type="module" src="/src/ui/main.ts"></script>
+  </body>
+</html>

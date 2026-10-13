@@ -1,0 +1,37 @@
+{
+  "name": "read-aloud",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "fixture": "node scripts/make-fixture.mjs",
+    "inspect": "node scripts/inspect.mjs",
+    "audit": "node scripts/audit.mjs",
+    "dictionary": "node scripts/build-dictionary.mjs",
+    "predev": "node scripts/build-dictionary.mjs --if-missing",
+    "prebuild": "node scripts/build-dictionary.mjs --if-missing"
+  },
+  "dependencies": {
+    "pdfjs-dist": "6.3.289",
+    "word-list": "^4.1.0"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2",
+    "vite": "8.3.1",
+    "vitest": "5.0.2"
+  },
+  "description": "Read PDFs aloud in the browser, with word highlighting and a reading order built for two-column papers.",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/M0nt31r1nh0/Read-Aloud.git"
+  }
+}

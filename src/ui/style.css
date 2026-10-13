@@ -1,0 +1,303 @@
+:root {
+  --bg: #eef0f3;
+  --panel: #ffffff;
+  --text: #1d2330;
+  --muted: #5d6677;
+  --border: #d5d9e0;
+  --accent: #2f6fde;
+  --sentence: rgba(47, 111, 222, 0.14);
+  --word: rgba(255, 196, 0, 0.55);
+  --word-border: #d99a00;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #15181e;
+    --panel: #1f232b;
+    --text: #e4e7ec;
+    --muted: #9aa3b2;
+    --border: #353b46;
+    --accent: #6c9cf0;
+    --sentence: rgba(108, 156, 240, 0.2);
+    --word: rgba(255, 196, 0, 0.5);
+    color-scheme: dark;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* The window never scrolls: the toolbar takes its natural height (it may
+   wrap) and the pages and the reading-order list scroll independently. */
+html,
+body {
+  height: 100%;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.45 system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+.toolbar {
+  flex: none;
+  z-index: 10;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  padding: 10px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.toolbar label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+}
+
+button,
+select {
+  font: inherit;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+
+button.primary {
+  min-width: 80px;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+select {
+  max-width: 260px;
+}
+
+.filters {
+  position: relative;
+}
+
+.filters-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 220px;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+}
+
+.filters-panel[hidden] {
+  display: none;
+}
+
+.toolbar .filters-panel label {
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.filters-panel hr {
+  width: 100%;
+  margin: 2px 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+.divider {
+  width: 1px;
+  height: 22px;
+  background: var(--border);
+}
+
+.status {
+  flex: 1 1 240px;
+  text-align: right;
+  color: var(--muted);
+}
+
+main {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  grid-template-rows: minmax(0, 1fr);
+}
+
+#pages {
+  overflow: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.page {
+  position: relative;
+  flex: none;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+}
+
+.page canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  cursor: text;
+}
+
+.hl-sentence,
+.hl-word,
+.debug {
+  position: absolute;
+  pointer-events: none;
+  border-radius: 3px;
+}
+
+.hl-sentence {
+  background: var(--sentence);
+}
+
+.hl-word {
+  background: var(--word);
+  outline: 1px solid var(--word-border);
+  mix-blend-mode: multiply;
+}
+
+.debug.block {
+  border: 2px dashed rgba(47, 111, 222, 0.7);
+}
+
+.debug.block.column {
+  border-color: rgba(18, 150, 90, 0.8);
+}
+
+.debug.dropped {
+  background: rgba(220, 40, 40, 0.15);
+  border: 1px solid rgba(220, 40, 40, 0.6);
+}
+
+.debug.figure-text {
+  background: repeating-linear-gradient(45deg, rgba(120, 120, 120, 0.16) 0 3px, transparent 3px 6px);
+}
+
+.debug.footnote {
+  background: rgba(150, 60, 200, 0.12);
+  border: 1px solid rgba(150, 60, 200, 0.6);
+}
+
+.debug[data-label]::before {
+  content: attr(data-label);
+  position: absolute;
+  top: -10px;
+  left: -10px;
+  padding: 0 4px;
+  font: 600 10px/16px system-ui, sans-serif;
+  color: #fff;
+  background: rgba(47, 111, 222, 0.9);
+  border-radius: 8px;
+}
+
+.debug.column[data-label]::before {
+  background: rgba(18, 150, 90, 0.95);
+}
+
+.debug.dropped[data-label]::before {
+  background: rgba(220, 40, 40, 0.9);
+}
+
+.debug.unit-start[data-label]::before {
+  background: rgba(230, 120, 0, 0.95);
+  top: -2px;
+  left: -26px;
+}
+
+#transcript {
+  overflow: auto;
+  padding: 12px 16px 24px;
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+}
+
+#transcript h2 {
+  margin: 4px 0 8px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+#transcript ol {
+  margin: 0;
+  padding-left: 22px;
+}
+
+#transcript li {
+  margin: 0 0 8px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+#transcript li:hover {
+  background: var(--sentence);
+}
+
+#transcript li.heading {
+  font-weight: 600;
+}
+
+#transcript li.footnote,
+#transcript li.caption,
+#transcript li.equation,
+#transcript li.table {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+#transcript li.current {
+  outline: 1px solid var(--accent);
+}
+
+#transcript mark {
+  background: var(--word);
+  color: inherit;
+  border-radius: 2px;
+}
+
+@media (max-width: 900px) {
+  main {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(120px, 30%);
+  }
+  #transcript {
+    border-left: 0;
+    border-top: 1px solid var(--border);
+  }
+}

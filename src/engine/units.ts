@@ -1,0 +1,449 @@
+// Ordered lines -> reading units (paragraphs, headings, captions, footnotes,
+// equations). Paragraphs may continue across columns and pages. Captions and
+// footnotes are held back until the paragraph they interrupted has finished.
+// Display maths is read as a short placeholder ("equation 3") inside the
+// sentence that introduces it.
+
+import type { Dictionary } from './dictionary';
+import { median, right } from './geometry';
+import { Lexicon, lineJoin } from './hyphenation';
+import { splitSentences } from './sentences';
+import { tableChars } from './tables';
+import { collapseSpaces, lineChars, lineText, normalizeChars, replaceAll, type SpokenChar } from './text';
+import type { AnalyzeOptions, CharBox, Line, PageLayout, ReadingUnit, Rect, Rule, UnitKind } from './types';
+
+export const CAPTION_START = /^(?:Figure|Fig\.|Table)\s*\d+[.:]/;
+// Section numbers: "3", "3.2", "3.2.1", "IV." — not "0.30." or "12 GPUs" (those
+// are rejected by context in isHeading). Letter numbering ("A. Proofs") is
+// left out: it collides with author initials.
+const NUMBERED_HEADING = /^(?:[1-9]\d?(?:\.\d{1,2}){0,3}\.?|[IVX]+\.)\s+\p{Lu}/u;
+const ENDS_SENTENCE = /[.!?:]["'”’)\]]?$/;
+// A bracket group, optionally a range of two groups ("[3]–[5]").
+export const CITATION_PATTERN = /\s*\[([^[\]]{1,120})\](?:\s*[–-]\s*\[([^[\]]{1,120})\])?/g;
+const CITATION_ITEM = /^(?:[1-9]\d{0,3}(?:\s*[–-]\s*[1-9]\d{0,3})?|[A-Z][A-Za-z+]{1,7}\d{2,4}[a-z]?)$/;
+const REFERENCE_LABEL = /^\[\d+\](?:\s|$)/;
+// Some publishers' fonts map the "Th" ligature to "+" ("+e", "+is", "+us").
+// Only the words that ligature produces are repaired, so maths ("+w") is not.
+const BROKEN_TH = new RegExp(
+  `(?<=^|[\\s“"‘'(\\[])\\+(?=(?:${[
+    'e', 'is', 'us', 'at', 'ey', 'en', 'ere', 'erefore', 'ereby', 'ese', 'ose', 'eir', 'em', 'an', 'ird', 'ree',
+    'rough', 'roughout', 'ough', 'ought', 'ousand', 'ousands', 'eory', 'eoretical', 'eoretically', 'eorem', 'reshold', 'us,',
+  ].join('|')})\\b)`,
+  'g',
+);
+const URL = /\b(?:https?:\/\/|www\.)[^\s]+/g;
+const URL_TOKEN = /(?:^|\s)(?:https?:\/\/|www\.)\S*$/;
+
+const ABBREVIATIONS: [RegExp, string | ((m: string) => string)][] = [
+  [URL, speakUrl],
+  [/\bFigs?\.(?=\s*\d)/g, (m) => (m.startsWith('Figs') ? 'Figures' : 'Figure')],
+  [/\bEqs?\.(?=\s*\(?\d)/g, (m) => (m.startsWith('Eqs') ? 'Equations' : 'Equation')],
+  [/\bSecs?\.(?=\s*\d)/g, (m) => (m.startsWith('Secs') ? 'Sections' : 'Section')],
+  [/§§\s?/g, 'Sections '],
+  [/§\s?/g, 'Section '],
+  [/\bTab\.(?=\s*\d)/g, 'Table'],
+  [/\bRef\.(?=\s*\[?\d)/g, 'Reference'],
+  [/\be\.g\.,?/g, (m) => (m.endsWith(',') ? 'for example,' : 'for example')],
+  [/\bi\.e\.,?/g, (m) => (m.endsWith(',') ? 'that is,' : 'that is')],
+  [/\bw\.r\.t\./g, 'with respect to'],
+  [/\bvs\./g, 'versus'],
+  [/\bcf\./g, 'compare'],
+  [/(?<=\d)\s*[*×]\s*(?=\d)/g, ' times '],
+  [/~\s?(?=\d)/g, 'about '],
+  [/(?<=\p{L})_(?=\p{L})/gu, ' '],
+  [/[✗✘]/g, 'cross'],
+  [/[✓✔]/g, 'check'],
+];
+
+// Display maths: a maths symbol and (almost) no ordinary words.
+const MATH_SYMBOL = /[=∑∏∫∈∉∀∃≤≥≠≈×÷√∞∂±→⇒∧∨⊆⊂∪∩]/u;
+const MATH_WORDS = new Set(['sin', 'cos', 'tan', 'log', 'exp', 'max', 'min', 'sigmoid', 'argmin', 'argmax', 'lim', 'sum', 'mod']);
+const EQUATION_NUMBER = /\((\d{1,3}[a-z]?)\)\s*$/;
+
+type Item = { line: Line } | { math: Line[] } | { table: Line[] };
+
+interface Open {
+  items: Item[];
+  kind: UnitKind;
+}
+
+interface Placed {
+  line: Line;
+  text: string;
+  block: Rect;
+}
+
+export function buildUnits(
+  pages: PageLayout[],
+  bodyFont: number,
+  options: AnalyzeOptions,
+  dictionary: Dictionary | null = null,
+): ReadingUnit[] {
+  const stream: Placed[] = pages.flatMap((p) =>
+    p.lines.map((line) => ({ line, text: lineText(line), block: p.blocks[line.block ?? 0].box })),
+  );
+  const lexicon = new Lexicon(dictionary);
+  for (const s of stream) lexicon.addLine(s.text);
+  const pitch = linePitch(stream, bodyFont);
+  const math = mathLines(stream, bodyFont, pitch);
+
+  const rulesOf = new Map(pages.map((p) => [p.page, p.rules]));
+  const units: ReadingUnit[] = [];
+  const emit = (items: Item[], kind: UnitKind) => {
+    if (kind === 'caption' && options.skipCaptions) return;
+    const unit = makeUnit(units.length, items, kind, lexicon, options, (page) => rulesOf.get(page) ?? []);
+    if (unit.text) units.push(unit);
+  };
+
+  let current: Open | null = null;
+  let prev: Placed | null = null;
+  let aside: Open | null = null;
+  let asidePrev: Placed | null = null;
+  let interrupted = false;
+  let afterMath = false;
+  let mathGroup: Line[] = [];
+  let tableGroup: Line[] = [];
+  const readTables = new Set<string>();
+  const deferred: Open[] = [];
+  const footnotes: Line[] = [];
+
+  const close = () => {
+    if (current) emit(current.items, current.kind);
+    current = null;
+    afterMath = false;
+    for (const a of deferred.splice(0)) emit(a.items, a.kind);
+    if (!options.skipFootnotes) for (const group of groupFootnotes(footnotes)) emit(group.map((line) => ({ line })), 'footnote');
+    footnotes.length = 0;
+  };
+  const endAside = () => {
+    if (!aside) return;
+    if (current) deferred.push(aside);
+    else emit(aside.items, aside.kind);
+    aside = null;
+  };
+  // Table cells are read after the caption, once the paragraph is finished.
+  const flushTable = () => {
+    if (!tableGroup.length) return;
+    const table: Open = { items: [{ table: tableGroup }], kind: 'table' };
+    tableGroup = [];
+    if (current) deferred.push(table);
+    else emit(table.items, table.kind);
+  };
+  const flushMath = () => {
+    if (!mathGroup.length) return;
+    const item = { math: mathGroup };
+    mathGroup = [];
+    // Inline only when the sentence runs into the formula ("as follows:").
+    if (current?.kind === 'paragraph' && prev && !/[.!?]["'”’)\]]?$/.test(prev.text)) {
+      current.items.push(item);
+      afterMath = true;
+    } else {
+      close();
+      emit([item], 'equation');
+    }
+  };
+
+  stream.forEach((s, i) => {
+    if (s.line.role === 'footnote') {
+      footnotes.push(s.line);
+      return;
+    }
+    if (s.line.role === 'table') {
+      // A table is read once, whole, when its first line comes up.
+      if (s.line.group !== undefined && readTables.has(s.line.group)) return;
+      endAside();
+      if (tableGroup.length && tableGroup[0].group !== s.line.group) flushTable();
+      if (s.line.group !== undefined) {
+        readTables.add(s.line.group);
+        tableGroup.push(...stream.filter((t) => t.line.role === 'table' && t.line.group === s.line.group).map((t) => t.line));
+      } else tableGroup.push(s.line);
+      return;
+    }
+    flushTable();
+    if (math[i]) {
+      endAside();
+      mathGroup.push(s.line);
+      return;
+    }
+    flushMath();
+
+    const heading = isHeading(stream, i, bodyFont, pitch);
+    const caption = CAPTION_START.test(s.text);
+
+    if (aside && asidePrev) {
+      const continuesAside =
+        !caption && !heading && sameBlock(asidePrev.line, s.line) && !startsParagraph(asidePrev, s, pitch, false);
+      if (continuesAside) {
+        aside.items.push({ line: s.line });
+        asidePrev = s;
+        return;
+      }
+      endAside();
+    }
+    if (caption) {
+      aside = { items: [{ line: s.line }], kind: 'caption' };
+      asidePrev = s;
+      if (current) interrupted = true;
+      return;
+    }
+
+    if (current && prev) {
+      const continuesHeading =
+        current.kind === 'heading' &&
+        heading &&
+        sameBlock(prev.line, s.line) &&
+        s.line.baseline - prev.line.baseline < 1.3 * s.line.fontSize;
+      let breaks: boolean;
+      if (continuesHeading) breaks = false;
+      else if (current.kind === 'heading' || heading) breaks = true;
+      // After display maths the sentence goes on only if the text does ("where …").
+      else if (afterMath) breaks = !/^[\p{Ll},;]/u.test(s.text);
+      else {
+        const first = current.items[0];
+        const inReference = 'line' in first && REFERENCE_LABEL.test(lineText(first.line));
+        breaks = startsParagraph(prev, s, pitch, interrupted, stream[i + 1], inReference);
+      }
+      if (breaks) close();
+    }
+    current ??= { items: [], kind: heading ? 'heading' : 'paragraph' };
+    current.items.push({ line: s.line });
+    prev = s;
+    interrupted = false;
+    afterMath = false;
+  });
+  flushTable();
+  flushMath();
+  endAside();
+  close();
+
+  // A caption set below its own table is read before the table's cells.
+  const top = (u: ReadingUnit) => Math.min(...u.boxes.filter((b): b is CharBox => !!b).map((b) => b.y));
+  const bottomOf = (u: ReadingUnit) => Math.max(...u.boxes.filter((b): b is CharBox => !!b).map((b) => b.y + b.h));
+  const pageOf = (u: ReadingUnit) => u.boxes.find((b) => b)?.page;
+  for (let k = 0; k + 1 < units.length; k++) {
+    const [table, caption] = [units[k], units[k + 1]];
+    const below = pageOf(table) === pageOf(caption) && top(caption) >= bottomOf(table) - 1;
+    if (table.kind === 'table' && caption.kind === 'caption' && /^Tab/.test(caption.text) && below) {
+      [units[k], units[k + 1]] = [units[k + 1], units[k]];
+      k++;
+    }
+  }
+  units.forEach((u, id) => (u.id = id));
+  return units;
+}
+
+/**
+ * `interrupted`: a caption or figure sat between the two lines. `next` is the
+ * line after `cur`, used to tell a first-line indent (next line back at the
+ * margin) from a hanging indent (reference lists, wrapped list items).
+ */
+function startsParagraph(
+  prev: Placed,
+  cur: Placed,
+  pitch: number,
+  interrupted: boolean,
+  next?: Placed,
+  inReference = false,
+): boolean {
+  const p = prev.line;
+  const c = cur.line;
+  if (Math.abs(c.fontSize - p.fontSize) > 0.15 * p.fontSize) return true;
+  if (REFERENCE_LABEL.test(cur.text) && (inReference || ENDS_SENTENCE.test(prev.text))) return true;
+  // Inside a reference entry, wrapped lines (hanging indent, URLs) belong to
+  // it, also across column and page breaks. Text after the reference list
+  // starts with a heading ("Appendix"), which ends the entry.
+  if (inReference) return sameBlock(p, c) && c.baseline - p.baseline > 1.5 * pitch;
+
+  const same = sameBlock(p, c) && !interrupted;
+  if (same && c.baseline - p.baseline > 1.5 * pitch) return true;
+  if (!same && /\p{L}[-‐­]$/u.test(prev.text)) return false; // word split across columns/pages
+
+  const endsSentence = ENDS_SENTENCE.test(prev.text);
+  const hanging =
+    next !== undefined &&
+    sameBlock(c, next.line) &&
+    next.line.baseline - c.baseline > 0 &&
+    next.line.baseline - c.baseline <= 1.3 * pitch &&
+    next.line.box.x > cur.block.x + 0.8 * c.fontSize;
+  const indented = c.box.x > cur.block.x + 0.8 * c.fontSize && !hanging;
+  const prevShort = right(p.box) < right(prev.block) - 2 * c.fontSize;
+  return endsSentence && (indented || prevShort);
+}
+
+function isHeading(stream: Placed[], i: number, bodyFont: number, pitch: number): boolean {
+  const s = stream[i];
+  if (s.line.fontSize >= bodyFont * 1.15 && s.text.length <= 150) return true;
+  if (!NUMBERED_HEADING.test(s.text) || s.text.length > 80 || /[-,;:.]$/.test(s.text)) return false;
+  if (s.text.split(/\s+/).length > 9) return false;
+
+  const prev = stream[i - 1];
+  const next = stream[i + 1];
+  const close = (a: Placed, b: Placed) =>
+    sameBlock(a.line, b.line) && b.line.baseline - a.line.baseline > 0 && b.line.baseline - a.line.baseline <= 1.3 * pitch;
+  // A wrapped line that happens to start with a number ("12 GPUs by …").
+  if (prev && close(prev, s) && !ENDS_SENTENCE.test(prev.text)) return false;
+  // A numbered list item whose text wraps under a hanging indent.
+  if (next && close(s, next) && next.line.box.x > s.line.box.x + 0.8 * s.line.fontSize) return false;
+  return true;
+}
+
+const sameBlock = (a: Line, b: Line) => a.page === b.page && a.block === b.block;
+
+/**
+ * Display-maths lines: a maths symbol with at most one ordinary word, plus
+ * short symbol-only lines (sub/superscript rows, "Subject to:") next to them.
+ */
+function mathLines(stream: Placed[], bodyFont: number, pitch: number): boolean[] {
+  const words = (t: string) => (t.match(/\p{L}{3,}/gu) ?? []).filter((w) => !MATH_WORDS.has(w.toLowerCase())).length;
+  const prose = (t: string) => /\p{L}{2,}[,;]?\s+\p{L}{2,}[,;]?\s+\p{L}{2,}/u.test(t);
+  const identifiers = (t: string) => /[_(){}]/.test(t) && !prose(t) && !/[.!?]$/.test(t);
+  const math = stream.map(
+    (s) =>
+      s.line.fontSize < 1.15 * bodyFont &&
+      MATH_SYMBOL.test(s.text) &&
+      (words(s.text) <= 1 || EQUATION_NUMBER.test(s.text) || identifiers(s.text)),
+  );
+  const weak = stream.map(
+    (s) =>
+      s.line.fontSize < 1.15 * bodyFont &&
+      !CAPTION_START.test(s.text) &&
+      ((s.text.replace(/\s/g, '').length <= 12 && words(s.text) <= 1 && !/[.!?]$/.test(s.text)) ||
+        (s.text.length <= 60 && identifiers(s.text))),
+  );
+  const near = (a: Placed, b: Placed) => a.line.page === b.line.page && Math.abs(a.line.baseline - b.line.baseline) <= 3 * pitch;
+  for (let changed = true; changed; ) {
+    changed = false;
+    stream.forEach((s, i) => {
+      if (math[i] || !weak[i]) return;
+      if ((i > 0 && math[i - 1] && near(stream[i - 1], s)) || (i + 1 < stream.length && math[i + 1] && near(stream[i + 1], s))) {
+        math[i] = true;
+        changed = true;
+      }
+    });
+  }
+  return math;
+}
+
+/** A new footnote starts at a superscript mark or a leading number. */
+function groupFootnotes(lines: Line[]): Line[][] {
+  const groups: Line[][] = [];
+  for (const line of lines) {
+    const startsNew = line.fragments[0]?.script === 'super' || /^\d+\s/.test(lineText(line));
+    if (startsNew || groups.length === 0) groups.push([line]);
+    else groups[groups.length - 1].push(line);
+  }
+  return groups;
+}
+
+function linePitch(stream: Placed[], bodyFont: number): number {
+  const steps: number[] = [];
+  for (let i = 1; i < stream.length; i++) {
+    const a = stream[i - 1].line;
+    const b = stream[i].line;
+    const d = b.baseline - a.baseline;
+    if (sameBlock(a, b) && Math.abs(a.fontSize - bodyFont) < 0.1 * bodyFont && d > 0 && d < 3 * bodyFont) steps.push(d);
+  }
+  return median(steps, 1.2 * bodyFont);
+}
+
+function makeUnit(
+  id: number,
+  items: Item[],
+  kind: UnitKind,
+  lexicon: Lexicon,
+  options: AnalyzeOptions,
+  rulesOf: (page: number) => Rule[],
+): ReadingUnit {
+  let seq: SpokenChar[] = [];
+  let afterMath = false;
+  for (const item of items) {
+    if ('table' in item) {
+      if (seq.length) seq.push(SPACE);
+      seq.push(...tableChars(item.table, rulesOf(item.table[0].page), (cell, next) => lineJoin(cell, next, lexicon)));
+      continue;
+    }
+    if ('math' in item) {
+      if (seq.length) seq.push(SPACE);
+      seq.push(...equationChars(item.math, options.readEquationText, seq.length === 0));
+      afterMath = true;
+      continue;
+    }
+    const chars = lineChars(item.line);
+    if (seq.length) {
+      if (afterMath) {
+        if (/^\p{Lu}/u.test(chars[0]?.ch ?? '')) seq.push({ ch: '.', box: null });
+        seq.push(SPACE);
+      } else if (URL_TOKEN.test(tail(seq))) {
+        // URLs are broken after "/", "." or "-" with nothing inserted.
+      } else {
+        const join = lineJoin(seq, chars, lexicon);
+        if (join === 'join') seq.pop();
+        else if (join === 'space') seq.push(SPACE);
+      }
+    }
+    afterMath = false;
+    seq.push(...chars);
+  }
+  seq = normalizeChars(seq);
+  seq = replaceAll(seq, BROKEN_TH, 'Th');
+  // A reference list entry: "[12] Author…" is read "12. Author…".
+  seq = replaceAll(seq, /^\[(\d+)\]\s*/g, (m) => `${m.match(/\d+/)![0]}. `);
+  if (options.skipCitations) seq = replaceAll(seq, CITATION_PATTERN, (m) => (isCitation(m) ? '' : m));
+  if (options.expandAbbreviations) for (const [re, rep] of ABBREVIATIONS) seq = replaceAll(seq, re, rep);
+  seq = collapseSpaces(seq);
+
+  const text = seq.map((c) => c.ch).join('');
+  return { id, kind, text, boxes: seq.map((c) => c.box), sentences: splitSentences(text) };
+}
+
+const SPACE: SpokenChar = { ch: ' ', box: null };
+
+const tail = (seq: SpokenChar[]) => seq.slice(-200).map((c) => c.ch).join('');
+
+/**
+ * Display maths as speech: "equation 3" (or the raw text when asked), with
+ * the spoken characters spread over the equation's glyphs so the highlight
+ * covers the formula while it is announced.
+ */
+function equationChars(lines: Line[], raw: boolean, standalone: boolean): SpokenChar[] {
+  const glyphs = lines.flatMap((l) => lineChars(l, true));
+  if (raw) {
+    const out: SpokenChar[] = [];
+    lines.forEach((l, i) => {
+      if (i) out.push(SPACE);
+      out.push(...lineChars(l, true));
+    });
+    return out;
+  }
+  const numbers = lines.map((l) => lineText(l).match(EQUATION_NUMBER)?.[1]).filter((n): n is string => !!n);
+  let spoken = numbers.length === 0 ? 'equation' : numbers.length === 1 ? `equation ${numbers[0]}` : `equations ${listOf(numbers)}`;
+  if (standalone) spoken = `${spoken[0].toUpperCase()}${spoken.slice(1)}.`;
+  const boxes = glyphs.map((g) => g.box).filter((b): b is CharBox => b !== null);
+  return [...spoken].map((ch, i) => ({ ch, box: boxes[Math.floor((i * boxes.length) / spoken.length)] ?? null }));
+}
+
+const listOf = (items: string[]) => `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+
+/**
+ * "[3]", "[3,2,1,44,55]", "[4–9, 12]", "[3; 5]", "[Smi20, Doe21]", "[3]–[5]".
+ * Every item must be a reference number (1–9999, or a range of them) or an
+ * author-year key, so "[0, 1]", "[0.5, 2]" and "a[i]" are kept.
+ */
+export function isCitation(match: string): boolean {
+  const groups = [...match.matchAll(/\[([^[\]]*)\]/g)].map((g) => g[1]);
+  return groups.every((g) => {
+    const items = g.split(/[,;]/).map((item) => item.trim());
+    return items.length > 0 && items.every((item) => CITATION_ITEM.test(item));
+  });
+}
+
+/** "https://aws.amazon.com/about-aws/…" -> "link to aws.amazon.com". */
+function speakUrl(url: string): string {
+  const trailing = url.match(/[.,;:)\]]+$/)?.[0] ?? '';
+  const host = url
+    .slice(0, url.length - trailing.length)
+    .replace(/^https?:\/\//, '')
+    .replace(/^www\./, '')
+    .split(/[/?#]/)[0];
+  return `link to ${host}${trailing}`;
+}
