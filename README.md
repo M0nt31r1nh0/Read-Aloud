@@ -135,8 +135,10 @@ working. `deploy/` is not committed.
    narrow windows). Click a paragraph in that list to jump to it.
 4. While it reads, the page follows the voice. Scroll yourself (wheel,
    trackpad, scrollbar or keys) to look around the paper while reading goes
-   on; **Back to reading** brings you back to the word being read. Clicking a
-   word or a paragraph, or ⏮ / ⏭, follows again too.
+   on. A button then shows that the page is no longer following:
+   **Back to reading ↑/↓** when the word being read is out of view, **Follow
+   reading** when it is in view. Click it and the page follows again.
+   Clicking a word or a paragraph, or ⏮ / ⏭, follows again too.
 
 | Control | Action |
 | --- | --- |

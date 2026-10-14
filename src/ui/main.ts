@@ -374,11 +374,18 @@ function showWord(unitIndex: number, start: number, end: number) {
 
 // While reading, the page and the reading-order list follow the voice.
 // Scrolling either one yourself frees it, so you can look around the paper
-// while reading goes on; "Back to reading", clicking a word or a paragraph,
-// and ⏮/⏭ follow again.
+// while reading goes on; "Back to reading" / "Follow reading", clicking a
+// word or a paragraph, and ⏮/⏭ follow again.
 const following = { pages: true, transcript: true };
 const backButton = $<HTMLButtonElement>('back-to-reading');
 let lastScrolled: keyof typeof following = 'pages';
+// A trackpad keeps sending wheel events for a second or two after a flick
+// (momentum). Those that belong to a gesture under way when following is
+// switched back on must not switch it off again: only a new gesture, after
+// a pause, frees the view.
+const GESTURE_GAP = 250;
+let lastWheel = 0;
+let ignoreGesture = false;
 
 function letGo(which: keyof typeof following) {
   lastScrolled = which;
@@ -391,12 +398,23 @@ for (const [container, which] of [
   [pagesEl, 'pages'],
   [transcriptEl, 'transcript'],
 ] as const) {
-  container.addEventListener('wheel', (e) => !e.ctrlKey && letGo(which), { passive: true });
+  container.addEventListener(
+    'wheel',
+    (e) => {
+      const now = performance.now();
+      if (now - lastWheel > GESTURE_GAP) ignoreGesture = false;
+      lastWheel = now;
+      if (!e.ctrlKey && !ignoreGesture) letGo(which);
+    },
+    { passive: true },
+  );
   container.addEventListener('touchmove', () => letGo(which), { passive: true });
-  // A press on the container itself, not on its content: the scrollbar.
+  // A press on the scrollbar (not on the page or the gaps between pages).
   container.addEventListener('pointerdown', (e) => {
     lastScrolled = which;
-    if (e.target === container) letGo(which);
+    const r = container.getBoundingClientRect();
+    const onScrollbar = e.clientX >= r.left + container.clientWidth || e.clientY >= r.top + container.clientHeight;
+    if (e.target === container && onScrollbar) letGo(which);
   });
   let queued = false;
   container.addEventListener('scroll', () => {
@@ -412,6 +430,8 @@ for (const [container, which] of [
 /** Follow the reading position again; `reveal` scrolls to it right away. */
 function followReading(reveal: boolean) {
   following.pages = following.transcript = true;
+  // The rest of a scroll gesture still running does not count.
+  ignoreGesture = performance.now() - lastWheel < GESTURE_GAP;
   backButton.hidden = true;
   if (!reveal) return;
   const word = pagesEl.querySelector<HTMLElement>('.hl-word') ?? pagesEl.querySelector<HTMLElement>('.hl-sentence');
@@ -420,7 +440,10 @@ function followReading(reveal: boolean) {
   if (li) revealIn(transcriptEl, li, 'nearest', 'smooth');
 }
 
-/** Shown while the reading position is scrolled out of view. */
+/**
+ * Shown whenever the view is not following: "Back to reading ↓" while the
+ * word being read is out of view, "Follow reading" while it is in view.
+ */
 function updateBackButton() {
   const word = pagesEl.querySelector<HTMLElement>('.hl-word') ?? pagesEl.querySelector<HTMLElement>('.hl-sentence');
   const li = transcriptEl.querySelector<HTMLElement>('li.current');
@@ -433,9 +456,9 @@ function updateBackButton() {
   const pagesAway = following.pages ? 0 : away(pagesEl, word);
   const listAway = following.transcript ? 0 : away(transcriptEl, li);
   const direction = pagesAway || listAway;
-  backButton.hidden = reader.state === 'idle' || direction === 0;
+  backButton.hidden = reader.state === 'idle' || (following.pages && following.transcript);
   if (backButton.hidden) return;
-  backButton.textContent = `Back to reading ${direction < 0 ? '↑' : '↓'}`;
+  backButton.textContent = direction ? `Back to reading ${direction < 0 ? '↑' : '↓'}` : 'Follow reading';
   // Centred at the bottom of the page view.
   const view = pagesEl.getBoundingClientRect();
   backButton.style.left = `${view.left + view.width / 2}px`;
