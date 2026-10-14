@@ -124,7 +124,10 @@ function createPageView(page: pdfjs.PDFPageProxy, index: number): PageView {
     if (!analysis) return;
     const r = overlay.getBoundingClientRect();
     const hit = hitTest(analysis.units, index, (e.clientX - r.left) / scale, (e.clientY - r.top) / scale);
-    if (hit) reader.play(hit);
+    if (hit) {
+      followReading(false);
+      reader.play(hit);
+    }
   });
 
   const paint = async () => {
@@ -197,14 +200,90 @@ function showSentence(unitIndex: number, start: number, end: number) {
     const text = analysis!.units[unitIndex].text;
     li.classList.add('current');
     li.innerHTML = `${escapeHtml(text.slice(0, start))}<mark>${escapeHtml(text.slice(start, end))}</mark>${escapeHtml(text.slice(end))}`;
-    revealIn(transcriptEl, li, 'nearest', 'auto');
+    if (following.transcript) revealIn(transcriptEl, li, 'nearest', 'auto');
   }
 }
 
 function showWord(unitIndex: number, start: number, end: number) {
   const [first] = drawRects(unitIndex, start, end, 'word');
-  if (first) revealIn(pagesEl, first, 'center', 'smooth');
+  if (first && following.pages) revealIn(pagesEl, first, 'center', 'smooth');
+  updateBackButton();
 }
+
+// ---------- following the reading position ----------
+
+// While reading, the page and the reading-order list follow the voice.
+// Scrolling either one yourself frees it, so you can look around the paper
+// while reading goes on; "Back to reading", clicking a word or a paragraph,
+// and ⏮/⏭ follow again.
+const following = { pages: true, transcript: true };
+const backButton = $<HTMLButtonElement>('back-to-reading');
+let lastScrolled: keyof typeof following = 'pages';
+
+function letGo(which: keyof typeof following) {
+  lastScrolled = which;
+  if (reader.state === 'idle' || !following[which]) return;
+  following[which] = false;
+  updateBackButton();
+}
+
+for (const [container, which] of [
+  [pagesEl, 'pages'],
+  [transcriptEl, 'transcript'],
+] as const) {
+  container.addEventListener('wheel', () => letGo(which), { passive: true });
+  container.addEventListener('touchmove', () => letGo(which), { passive: true });
+  // A press on the container itself, not on its content: the scrollbar.
+  container.addEventListener('pointerdown', (e) => {
+    lastScrolled = which;
+    if (e.target === container) letGo(which);
+  });
+  let queued = false;
+  container.addEventListener('scroll', () => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => {
+      queued = false;
+      updateBackButton();
+    });
+  });
+}
+
+/** Follow the reading position again; `reveal` scrolls to it right away. */
+function followReading(reveal: boolean) {
+  following.pages = following.transcript = true;
+  backButton.hidden = true;
+  if (!reveal) return;
+  const word = pagesEl.querySelector<HTMLElement>('.hl-word') ?? pagesEl.querySelector<HTMLElement>('.hl-sentence');
+  if (word) revealIn(pagesEl, word, 'center', 'smooth');
+  const li = transcriptEl.querySelector<HTMLElement>('li.current');
+  if (li) revealIn(transcriptEl, li, 'nearest', 'smooth');
+}
+
+/** Shown while the reading position is scrolled out of view. */
+function updateBackButton() {
+  const word = pagesEl.querySelector<HTMLElement>('.hl-word') ?? pagesEl.querySelector<HTMLElement>('.hl-sentence');
+  const li = transcriptEl.querySelector<HTMLElement>('li.current');
+  const away = (container: HTMLElement, el: HTMLElement | null) => {
+    if (!el) return 0;
+    const view = container.getBoundingClientRect();
+    const r = el.getBoundingClientRect();
+    return r.bottom < view.top ? -1 : r.top > view.bottom ? 1 : 0;
+  };
+  const pagesAway = following.pages ? 0 : away(pagesEl, word);
+  const listAway = following.transcript ? 0 : away(transcriptEl, li);
+  const direction = pagesAway || listAway;
+  backButton.hidden = reader.state === 'idle' || direction === 0;
+  if (backButton.hidden) return;
+  backButton.textContent = `Back to reading ${direction < 0 ? '↑' : '↓'}`;
+  // Centred at the bottom of the page view.
+  const view = pagesEl.getBoundingClientRect();
+  backButton.style.left = `${view.left + view.width / 2}px`;
+  backButton.style.top = `${view.bottom - 56}px`;
+}
+
+backButton.addEventListener('click', () => followReading(true));
+window.addEventListener('resize', updateBackButton);
 
 /**
  * Scroll only `container` so `el` is visible. Element.scrollIntoView() would
@@ -238,7 +317,10 @@ function renderTranscript() {
     li.className = unit.kind;
     li.textContent = unit.text;
     li.title = `${unit.kind} · ${unit.sentences.length} sentence(s) · click to read from here`;
-    li.addEventListener('click', () => reader.play({ unit: i, char: 0 }));
+    li.addEventListener('click', () => {
+      followReading(false);
+      reader.play({ unit: i, char: 0 });
+    });
     list.append(li);
   });
   const heading = document.createElement('h2');
@@ -281,6 +363,7 @@ function renderLayout() {
 function updatePlayButton(state: ReaderState) {
   playBtn.textContent = state === 'playing' ? 'Pause' : state === 'paused' ? 'Resume' : 'Play';
   if (state === 'idle') {
+    followReading(false);
     clearHighlights();
     for (const li of transcriptEl.querySelectorAll<HTMLElement>('li.current')) {
       li.classList.remove('current');
@@ -318,8 +401,14 @@ rateInput.addEventListener('input', () => {
 
 playBtn.addEventListener('click', () => analysis && reader.toggle());
 $('stop').addEventListener('click', () => reader.stop());
-$('next').addEventListener('click', () => reader.next());
-$('prev').addEventListener('click', () => reader.previous());
+$('next').addEventListener('click', () => {
+  followReading(false);
+  reader.next();
+});
+$('prev').addEventListener('click', () => {
+  followReading(false);
+  reader.previous();
+});
 for (const id of ['opt-citations', 'opt-captions', 'opt-tables', 'opt-abbrev', 'opt-footnotes', 'opt-equations']) $(id).addEventListener('change', () => analysis && analyze());
 $('opt-layout').addEventListener('change', renderLayout);
 
@@ -374,10 +463,15 @@ document.addEventListener('keydown', (e) => {
     reader.toggle();
   } else if (e.key === 'ArrowRight') {
     e.preventDefault();
+    followReading(false);
     reader.next();
   } else if (e.key === 'ArrowLeft') {
     e.preventDefault();
+    followReading(false);
     reader.previous();
+  } else if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End'].includes(e.key)) {
+    // Scrolling with the keyboard frees the view like the mouse does.
+    letGo(lastScrolled);
   }
 });
 
