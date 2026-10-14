@@ -59,6 +59,15 @@ const ABBREVIATIONS: [RegExp, string | ((m: string) => string)][] = [
   [/[✓✔]/g, 'check'],
 ];
 
+// List bullets are layout, not words: voices read "•" as "bullet" or "dot".
+// After a sentence (or at the start) the bullet goes; between items that do
+// not end a sentence it becomes a pause.
+const BULLET = '[•◦▪▫‣⁃●○■□▸►]';
+const LIST_MARKERS: [RegExp, string][] = [
+  [new RegExp(`(?<=^|[.!?:;]["'”’)\\]]?)\\s*${BULLET}(?=\\s)`, 'gu'), ' '],
+  [new RegExp(`\\s+${BULLET}(?=\\s)`, 'gu'), ';'],
+];
+
 // Display maths: a maths symbol and (almost) no ordinary words.
 const MATH_SYMBOL = /[=∑∏∫∈∉∀∃≤≥≠≈×÷√∞∂±→⇒∧∨⊆⊂∪∩]/u;
 const MATH_WORDS = new Set(['sin', 'cos', 'tan', 'log', 'exp', 'max', 'min', 'sigmoid', 'argmin', 'argmax', 'lim', 'sum', 'mod']);
@@ -444,6 +453,7 @@ function makeUnit(
   }
   seq = normalizeChars(seq);
   seq = replaceAll(seq, BROKEN_TH, 'Th');
+  for (const [re, rep] of LIST_MARKERS) seq = replaceAll(seq, re, rep);
   // A reference list entry: "[12] Author…" is read "12. Author…".
   seq = replaceAll(seq, /^\[(\d+)\]\s*/g, (m) => `${m.match(/\d+/)![0]}. `);
   if (options.skipCitations) seq = replaceAll(seq, CITATION_PATTERN, (m) => (isCitation(m) ? '' : m));

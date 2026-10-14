@@ -259,6 +259,28 @@ describe('tables without rules', () => {
   });
 });
 
+describe('list bullets', () => {
+  it('are not read aloud', async () => {
+    const { buildUnits } = await import('../src/engine/units');
+    const line = (text: string, baseline: number) => {
+      const chars = [...text].map((_, i) => ({ x: 50 + i * 5, y: baseline - 8, w: 5, h: 10 }));
+      const fragment = { page: 0, text, x: 50, top: baseline - 8, width: text.length * 5, height: 10, baseline, fontSize: 10, fontName: 'f', chars };
+      return { page: 0, fragments: [fragment], box: { x: 50, y: baseline - 8, w: text.length * 5, h: 10 }, baseline, fontSize: 10, fontName: 'f', block: 0 };
+    };
+    const read = (text: string) => {
+      const page = {
+        page: 0, width: 612, height: 792, dropped: [], rules: [], lines: [line(text, 100)],
+        blocks: [{ page: 0, order: 0, kind: 'full' as const, box: { x: 50, y: 0, w: 500, h: 792 } }],
+      };
+      return buildUnits([page], 10, DEFAULT_OPTIONS)[0].text;
+    };
+    expect(read('• IMDB. Has 25,000 samples. • HateSpeech. Has 10,703 samples (1:7.95 ratio).')).toBe(
+      'IMDB. Has 25,000 samples. HateSpeech. Has 10,703 samples (1:7.95 ratio).',
+    );
+    expect(read('Three knobs: • frame rate • image size')).toBe('Three knobs: frame rate; image size');
+  });
+});
+
 describe('sentences', () => {
   it('does not split after common abbreviations or initials', () => {
     const text = 'We follow Smith et al. in this. Dr. Jones agrees with J. Doe. Done.';
