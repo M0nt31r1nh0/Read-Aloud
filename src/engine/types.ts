@@ -49,6 +49,8 @@ export interface Line {
   block?: number;
   /** Footnotes are read after their paragraph; figure text is not read. */
   role?: 'footnote' | 'figure' | 'table';
+  /** Starts like a caption ("Table 5. …") but goes on with the sentence above. */
+  inText?: boolean;
   /** The caption a figure or table line belongs to. */
   group?: string;
 }

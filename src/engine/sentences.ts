@@ -3,6 +3,8 @@ import type { Sentence } from './types';
 /** Segments ending like this are not sentence ends. */
 const ABBREVIATION_END =
   /(?:\bet al|\be\.g|\bi\.e|\bFigs?|\bEqs?|\bSecs?|\bTab|\bRef|\bvs|\bcf|\bDr|\bMrs?|\bMs|\bProf|\bNo|\bapprox|\bresp|\b[A-Z])\.$/;
+/** A section or list number alone ("6.", "6.1.", "A.") belongs to what follows. */
+const NUMBER_ONLY = /^(?:\d{1,3}|[A-Z])(?:\.\d{1,3})*\.$/;
 const MAX_SENTENCE = 400;
 
 export function splitSentences(text: string, locale = 'en'): Sentence[] {
@@ -12,7 +14,8 @@ export function splitSentences(text: string, locale = 'en'): Sentence[] {
   const merged: Sentence[] = [];
   for (const s of raw) {
     const prev = merged[merged.length - 1];
-    if (prev && ABBREVIATION_END.test(text.slice(prev.start, prev.end).trimEnd())) prev.end = s.end;
+    const prevText = prev ? text.slice(prev.start, prev.end).trim() : '';
+    if (prev && (ABBREVIATION_END.test(prevText) || NUMBER_ONLY.test(prevText))) prev.end = s.end;
     else merged.push({ ...s });
   }
 

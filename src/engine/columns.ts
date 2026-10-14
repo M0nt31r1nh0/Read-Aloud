@@ -20,7 +20,8 @@ interface Gutter {
 
 const MAX_DEPTH = 2;
 
-export function orderLines(lines: Line[], page: number): { ordered: Line[]; blocks: Block[] } {
+/** `bodyFont`: the document's body text size (author blocks are larger). */
+export function orderLines(lines: Line[], page: number, bodyFont = median(lines.map((l) => l.fontSize), 10)): { ordered: Line[]; blocks: Block[] } {
   const ordered: Line[] = [];
   const blocks: Block[] = [];
   const emit = (group: Line[], kind: Block['kind']) => {
@@ -32,13 +33,26 @@ export function orderLines(lines: Line[], page: number): { ordered: Line[]; bloc
       ordered.push(line);
     }
   };
-  layoutRegion(lines, 0, emit);
+  layoutRegion(lines, 0, emit, bodyFont);
   return { ordered, blocks };
 }
 
-function layoutRegion(lines: Line[], depth: number, emit: (lines: Line[], kind: Block['kind']) => void) {
+function layoutRegion(lines: Line[], depth: number, emit: (lines: Line[], kind: Block['kind']) => void, bodyFont: number) {
   const slabs = cutSlabs(lines).flatMap(splitAtCrossingLines);
-  const gutters = slabs.map(findGutters);
+  // Author and title blocks are read across, row by row: never split into
+  // columns, never joined to the columns below them.
+  const title = slabs.map((slab) => isTitleBlock(slab, bodyFont));
+  const gutters = slabs.map((slab, k) => (title[k] ? [] : findGutters(slab)));
+  // The gutters a region keeps when slab k joins it, or null if it cannot.
+  // A slab that crosses some of them can still join on the gutters it shares:
+  // a table's cell gaps beside one text column end where the text below
+  // starts, but the gutter between the two text columns goes on.
+  const joins = (k: number, g: Gutter[]): Gutter[] | null => {
+    if (title[k]) return null;
+    if (fitsGutters(slabs[k], g)) return narrow(g, gutters[k]);
+    const shared = g.filter((x) => gutters[k].some((s) => s.start < x.end && s.end > x.start) && fitsGutters(slabs[k], [x]));
+    return shared.length ? narrow(shared, gutters[k]) : null;
+  };
 
   // Grow a column region around every slab that has a gutter.
   const owner = new Array<number>(slabs.length).fill(-1);
@@ -48,8 +62,14 @@ function layoutRegion(lines: Line[], depth: number, emit: (lines: Line[], kind: 
     let g = gutters[i];
     let from = i;
     let to = i;
-    while (from > 0 && owner[from - 1] === -1 && fitsGutters(slabs[from - 1], g)) g = narrow(g, gutters[--from]);
-    while (to < slabs.length - 1 && owner[to + 1] === -1 && fitsGutters(slabs[to + 1], g)) g = narrow(g, gutters[++to]);
+    for (let next: Gutter[] | null; from > 0 && owner[from - 1] === -1 && (next = joins(from - 1, g)); ) {
+      g = next;
+      from--;
+    }
+    for (let next: Gutter[] | null; to < slabs.length - 1 && owner[to + 1] === -1 && (next = joins(to + 1, g)); ) {
+      g = next;
+      to++;
+    }
     for (let k = from; k <= to; k++) owner[k] = regions.length;
     regions.push({ from, to, gutters: g });
   }
@@ -68,12 +88,21 @@ function layoutRegion(lines: Line[], depth: number, emit: (lines: Line[], kind: 
     const region = regions[owner[i]];
     const regionLines = slabs.slice(region.from, region.to + 1).flat();
     for (const column of splitColumns(regionLines, region.gutters)) {
-      if (depth + 1 < MAX_DEPTH) layoutRegion(column, depth + 1, emit);
+      if (depth + 1 < MAX_DEPTH) layoutRegion(column, depth + 1, emit, bodyFont);
       else emit(column, 'column');
     }
     i = region.to + 1;
   }
   emit(pendingFull, kind);
+}
+
+/**
+ * Rows of author names and affiliations, all in a larger font than the body
+ * text: centred text whose gaps can line up with the column gutter below.
+ * (Figures mix in small labels; a heading is a line or two.)
+ */
+function isTitleBlock(slab: Line[], body: number): boolean {
+  return slab.length >= 4 && slab.every((l) => l.fontSize >= 1.1 * body);
 }
 
 /** Horizontal cuts at vertical white space taller than half a line. */

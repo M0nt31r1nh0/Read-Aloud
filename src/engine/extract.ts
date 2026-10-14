@@ -72,8 +72,15 @@ export async function extractPage(
       tx[0] > 0 && Math.abs(tx[1]) < fontSize * 0.01 && Math.abs(tx[2]) < fontSize * 0.01;
     if (!(fontSize > 0) || !horizontal || style.vertical) continue;
 
-    const ascent = clamp(style.ascent ?? 0.8, 0.5, 1.1);
-    const descent = clamp(style.descent ?? -0.2, -0.5, 0);
+    let ascent = clamp(style.ascent ?? 0.8, 0.5, 1.1);
+    let descent = clamp(style.descent ?? -0.2, -0.5, 0);
+    // Some fonts report metrics that cover half a line or less (ascent 0.5,
+    // no descent): lines would look half as tall, the gaps between them like
+    // paragraph breaks, and highlights would cover the top half of the words.
+    if (ascent - descent < 0.75) {
+      ascent = 0.8;
+      descent = -0.2;
+    }
     const x = tx[4];
     const baseline = tx[5];
     const width = item.width > 0 ? item.width : item.str.length * fontSize * 0.5;

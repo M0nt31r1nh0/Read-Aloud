@@ -4,9 +4,9 @@ import type { PageText } from './extract';
 import { bottom, centerX, right, union } from './geometry';
 import { buildLines } from './lines';
 import { findMarginLines } from './margins';
-import { CAPTION_START, buildUnits } from './units';
+import { CAPTION_START, buildUnits, isCaptionLine } from './units';
 import { lineText } from './text';
-import { DEFAULT_OPTIONS, type AnalyzeOptions, type Block, type Line, type PageLayout, type Rect, type ReadingUnit } from './types';
+import { DEFAULT_OPTIONS, type AnalyzeOptions, type Block, type Line, type PageLayout, type Rect, type ReadingUnit, type Rule } from './types';
 
 export interface DocumentAnalysis {
   pages: PageLayout[];
@@ -29,9 +29,10 @@ export function analyzeDocument(
 
   const layouts: PageLayout[] = lined.map((p) => {
     const kept = p.lines.filter((l) => !dropped.has(l));
-    const { ordered, blocks } = orderLines(kept, p.page);
+    const { ordered, blocks } = orderLines(kept, p.page, bodyFontSize);
+    markInTextMentions(ordered);
     markFigureText(ordered, blocks, bodyFontSize);
-    markFootnotes(ordered, bodyFontSize, p.height);
+    markFootnotes(ordered, bodyFontSize, p.height, blocks, p.rules ?? []);
     const skipped = (l: Line) => l.role === 'figure' || (l.role === 'table' && options.skipTables);
     const read = ordered.filter((l) => !skipped(l));
     return {
@@ -68,13 +69,56 @@ function dominantFontSize(lines: Line[]): number {
 }
 
 /**
- * Footnotes: small text in the lower part of the page with no body-size text
- * below it in the same column.
+ * "… as evidenced in Appendix" / "Table 5. Therefore, …": a line that starts
+ * like a caption but continues the sentence of the line above it.
  */
-function markFootnotes(ordered: Line[], bodyFont: number, pageHeight: number) {
+function markInTextMentions(ordered: Line[]) {
+  ordered.forEach((line, i) => {
+    const prev = ordered[i - 1];
+    if (!prev || !CAPTION_START.test(lineText(line))) return;
+    const prevText = lineText(prev).trim();
+    line.inText =
+      prev.block === line.block &&
+      Math.abs(prev.fontSize - line.fontSize) < 0.5 &&
+      line.baseline > prev.baseline &&
+      line.baseline - prev.baseline <= 1.6 * line.fontSize &&
+      line.box.x <= prev.box.x + 0.5 * line.fontSize &&
+      isProse(prevText) &&
+      !/[.!?:]["'”’)\]]?$/.test(prevText);
+  });
+}
+
+/**
+ * Footnotes, two ways:
+ *  - under the footnote rule: the short line LaTeX (and most templates) draws
+ *    at a column's left edge above the footnotes. Everything below it in that
+ *    column is footnotes, whatever its size (URLs are often set larger);
+ *  - otherwise, small text in the lower part of the page with no body-size
+ *    text below it in the same column.
+ */
+function markFootnotes(ordered: Line[], bodyFont: number, pageHeight: number, blocks: Block[], rules: Rule[]) {
+  for (const rule of rules) {
+    const width = rule.x1 - rule.x0;
+    if (rule.y1 - rule.y0 > 1 || rule.y0 < 0.5 * pageHeight || width < 20) continue;
+    const column = blocks.find((b) => Math.abs(b.box.x - rule.x0) <= 4 && width <= 0.6 * b.box.w && rule.y0 >= b.box.y);
+    if (!column) continue;
+    const inColumn = (l: Line) => centerX(l.box) >= column.box.x && centerX(l.box) <= right(column.box);
+    const below = ordered.filter((l) => !l.role && l.box.y >= rule.y0 - 1 && inColumn(l)).sort((a, b) => a.box.y - b.box.y);
+    // The footnote rule has white space above it; a fraction bar at the
+    // start of a line sits right under its numerator.
+    const above = ordered.filter((l) => bottom(l.box) <= rule.y0 + 1 && inColumn(l));
+    if (above.some((l) => rule.y0 - bottom(l.box) < 0.4 * bodyFont)) continue;
+    // The first footnote starts with its mark ("1", "*", "†"), raised or not,
+    // or is set smaller; a short table rule above body text does not.
+    const first = below[0];
+    if (!first || first.box.y - rule.y0 > 2 * bodyFont) continue;
+    const marked = first.fragments[0]?.script === 'super' || /^[\d*∗†‡§¶]/.test(lineText(first).trim()) || first.fontSize <= 0.88 * bodyFont;
+    if (!marked || below.some((l) => l.fontSize > 1.05 * bodyFont)) continue;
+    for (const line of below) line.role = 'footnote';
+  }
   for (const line of ordered) {
     if (line.role || line.fontSize > 0.88 * bodyFont || line.box.y < 0.6 * pageHeight) continue;
-    if (CAPTION_START.test(lineText(line))) continue;
+    if (isCaptionLine(line, lineText(line))) continue;
     const bodyBelow = ordered.some(
       (other) =>
         other.block === line.block &&
@@ -155,7 +199,7 @@ function markFigureText(lines: Line[], blocks: Block[], bodyFont: number) {
   // Captions with their wrapped lines: another figure's caption ends a walk.
   const captionLines = new Set<Line>();
   for (const caption of lines) {
-    if (!CAPTION_START.test(text.get(caption)!)) continue;
+    if (!isCaptionLine(caption, text.get(caption)!)) continue;
     let last = caption;
     for (;;) {
       const next = lines.find(
@@ -177,12 +221,12 @@ function markFigureText(lines: Line[], blocks: Block[], bodyFont: number) {
     bodyLike(l, area) ||
     paragraphTail(l, area) ||
     (bodySize(l) && runInRow(l)) ||
-    CAPTION_START.test(text.get(l)!) ||
+    isCaptionLine(l, text.get(l)!) ||
     (l.fontSize >= 1.15 * bodyFont && /\s/.test(text.get(l)!));
 
   lines.forEach((caption, captionIndex) => {
     const captionText = text.get(caption)!;
-    if (!CAPTION_START.test(captionText)) return;
+    if (!isCaptionLine(caption, captionText)) return;
     const isTable = /^tab/i.test(captionText);
     // The caption's column: its own block plus the column-sized blocks it
     // overlaps horizontally (a column can be subdivided, e.g. a table's label
@@ -214,8 +258,10 @@ function markFigureText(lines: Line[], blocks: Block[], bodyFont: number) {
             (below ? l.box.y >= bottom(caption.box) - 1 : bottom(l.box) <= caption.box.y + 1),
         )
         .sort((a, b) => (below ? a.box.y - b.box.y : b.box.y - a.box.y));
+      let edge = below ? bottom(caption.box) : caption.box.y;
       if (below) {
-        // The caption's own continuation lines come first.
+        // The caption's own continuation lines come first; the gap to the
+        // table is measured from the last of them.
         let baseline = caption.baseline;
         while (
           candidates.length &&
@@ -223,11 +269,11 @@ function markFigureText(lines: Line[], blocks: Block[], bodyFont: number) {
           candidates[0].baseline - baseline <= 1.5 * caption.fontSize
         ) {
           baseline = candidates[0].baseline;
+          edge = Math.max(edge, bottom(candidates[0].box));
           candidates.shift();
         }
       }
       const marked: Line[] = [];
-      let edge = below ? bottom(caption.box) : caption.box.y;
       for (const l of candidates) {
         if (stops(l, area)) break;
         // Table rows are contiguous: a wide vertical gap ends the table (what

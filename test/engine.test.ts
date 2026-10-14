@@ -201,6 +201,28 @@ describe('reading order', () => {
     return { page: 0, fragments: [fragment], box: { x, y, w, h: fontSize }, baseline: y + 0.8 * fontSize, fontSize, fontName: 'f' };
   };
 
+  it('reads the left column first when a table beside the right column ends level with a paragraph break', async () => {
+    // nie24a page 9: Table 2 (three cell columns) in the left column, beside
+    // the right column's first paragraph, which ends at the table's bottom.
+    // The cell gaps stop where the left column's text starts; the gutter
+    // between the text columns goes on.
+    const { orderLines } = await import('../src/engine/columns');
+    const table = Array.from({ length: 5 }, (_, r) => [
+      line(`cell ${r}a`, 60, 237 + 12 * r, 120),
+      line(`cell ${r}b`, 188, 237 + 12 * r, 47),
+      line(`cell ${r}c`, 244, 237 + 12 * r, 40),
+    ]).flat();
+    const rightTop = Array.from({ length: 6 }, (_, i) => line(`right top ${i}`, 307, 237 + 12 * i, i === 5 ? 84 : 234));
+    const left = Array.from({ length: 25 }, (_, i) => line(`left ${i}`, 55, 313 + 12 * i, 234));
+    const rightRest = Array.from({ length: 24 }, (_, i) => line(`right ${i}`, 307, 321 + 12 * i, 234));
+    const { ordered } = orderLines([...rightRest, ...left, ...rightTop, ...table], 0);
+    const order = ordered.map((l) => l.fragments[0].text).filter((t) => !t.startsWith('cell'));
+    expect(order).toEqual([...left, ...rightTop, ...rightRest].map((l) => l.fragments[0].text));
+    // The table is still read before the text below it, row by row.
+    const names = ordered.map((l) => l.fragments[0].text);
+    expect(names.indexOf('cell 4c')).toBeLessThan(names.indexOf('left 0'));
+  });
+
   it('finds a narrow gutter beside a wrapped figure, above full-width text', async () => {
     const { orderLines } = await import('../src/engine/columns');
     const left = Array.from({ length: 12 }, (_, i) => line(`left ${i}`, 108, 100 + 11 * i, 190));
@@ -259,6 +281,116 @@ describe('tables without rules', () => {
   });
 });
 
+describe('page layout edge cases', () => {
+  const line = (text: string, x: number, y: number, w: number, fontSize = 10) => {
+    const fragment = { page: 0, text, x, top: y, width: w, height: fontSize, baseline: y + 0.8 * fontSize, fontSize, fontName: 'f', chars: [] };
+    return { page: 0, fragments: [fragment], box: { x, y, w, h: fontSize }, baseline: y + 0.8 * fontSize, fontSize, fontName: 'f' };
+  };
+
+  it('gives lines their full height when the font reports half of it', async () => {
+    // 2501.15953: ascent 0.5 and no descent made every line half as tall, so
+    // the gaps between lines looked like paragraph breaks and hid the gutter.
+    const page = {
+      getViewport: () => ({ width: 612, height: 792, transform: [1, 0, 0, -1, 0, 792] }),
+      getTextContent: async () => ({
+        items: [{ str: 'state changes, enabling reconstruction', transform: [9, 0, 0, 9, 54, 346.5], width: 160, fontName: 'f1' }],
+        styles: { f1: { fontFamily: 'serif', ascent: 0.5, descent: 0 } },
+      }),
+    };
+    const { fragments } = await extractPage(page, 0);
+    expect(fragments[0].height).toBeCloseTo(9);
+    expect(fragments[0].baseline - fragments[0].top).toBeCloseTo(7.2);
+  });
+
+  it('reads an author block row by row, not split into the columns below it', async () => {
+    // osdi18-hsieh: centred rows of 12pt names whose gaps line up with the
+    // gutter between the two 10pt text columns.
+    const { orderLines } = await import('../src/engine/columns');
+    const authors = [
+      [line('Kevin Hsieh', 88, 103, 64, 12), line('Ganesh Ananthanarayanan', 164, 103, 133, 12), line('Peter Bodik', 309, 103, 61, 12), line('Shivaram Venkataraman', 383, 103, 129, 12)],
+      [line('Paramvir Bahl', 126, 121, 74, 12), line('Matthai Philipose', 212, 121, 89, 12), line('Phillip B. Gibbons', 313, 121, 94, 12), line('Onur Mutlu', 420, 121, 66, 12)],
+    ];
+    const left = Array.from({ length: 20 }, (_, i) => line(`left ${i}`, 72, 170 + 12 * i, 225));
+    const right = Array.from({ length: 20 }, (_, i) => line(`right ${i}`, 315, 170 + 12 * i, 225));
+    const { ordered } = orderLines([...right, ...left, ...authors.flat()], 0, 10);
+    expect(ordered.map((l) => l.fragments[0].text)).toEqual([...authors.flat(), ...left, ...right].map((l) => l.fragments[0].text));
+  });
+
+  it('drops text beyond the running header, but not text above a figure’s repeated axis label', async () => {
+    const { findMarginLines } = await import('../src/engine/margins');
+    const pages = [0, 1, 2].map((page) => {
+      const header = { ...line('Online Cascade Learning for Efficient Inference', 180, 48, 236, 9), page };
+      const tick = { ...line('1.00', 65, 65, 14, 7), page }; // a figure at the top of every page
+      const body = { ...line(['Video analytics is costly.', 'Cascades cut the cost.', 'Results follow below.'][page], 317, 58, 239), page };
+      const hidden = { ...line('Online Model Cascade', 97, 8, 179, 16), page };
+      return { page, height: 792, lines: page === 1 ? [header, tick, body, hidden] : [header, tick, body] };
+    });
+    const dropped = findMarginLines(pages);
+    const text = (l: { fragments: { text: string }[] }) => l.fragments[0].text;
+    const kept = pages.flatMap((p) => p.lines.filter((l) => !dropped.has(l)).map(text));
+    expect(kept).toEqual(['Video analytics is costly.', 'Cascades cut the cost.', 'Results follow below.']);
+  });
+});
+
+describe('footnotes', () => {
+  const fragment = (text: string, x: number, y: number, fontSize = 10) => ({
+    page: 0, text, x, top: y, width: text.length * 0.5 * fontSize, height: fontSize, baseline: y + 0.8 * fontSize, fontSize, fontName: 'f',
+    chars: [...text].map((_, i) => ({ x: x + 0.5 * fontSize * i, y, w: 0.5 * fontSize, h: fontSize })),
+  });
+  const body = Array.from({ length: 30 }, (_, i) =>
+    fragment(['The feature of an object occurrence is generated on', 'object images cropped from ten sampled frames of it.'][i % 2], 135, 300 + 12 * i),
+  );
+
+  it('skips everything under the footnote rule, even text as large as the body', async () => {
+    const { analyzeDocument } = await import('../src/engine');
+    // 2403.11481: a 9pt URL footnote (more than 88% of the body size).
+    const page = {
+      page: 0, width: 612, height: 792,
+      fragments: [...body, fragment('1https://platform.openai.com/docs/guides/embeddings', 138, 668, 9)],
+      rules: [{ x0: 135, y0: 665, x1: 191, y1: 665 }],
+    };
+    const read = (skipFootnotes: boolean) => analyzeDocument([page], { ...DEFAULT_OPTIONS, skipFootnotes }).units.map((u) => u.text).join(' ');
+    expect(read(true)).not.toContain('platform.openai.com');
+    expect(read(false)).toContain('platform.openai.com');
+  });
+
+  it('does not take a fraction bar at the start of a line for the footnote rule', async () => {
+    const { analyzeDocument } = await import('../src/engine');
+    // 2403.10517: "180×0.02+…" over "180×0.02+…" right below the numerator.
+    const page = {
+      page: 0, width: 612, height: 792,
+      fragments: [...body, fragment('180×0.02+8.4×0.02', 136, 670, 7), fragment('180×0.02+8.4×0.02+3', 136, 680, 7), fragment('under these conditions, the computation of CLIP features is small.', 135, 692)],
+      rules: [{ x0: 135, y0: 679, x1: 200, y1: 679 }],
+    };
+    const text = analyzeDocument([page], { ...DEFAULT_OPTIONS, skipFootnotes: true }).units.map((u) => u.text).join(' ');
+    expect(text).toContain('under these conditions, the computation of CLIP features is small.');
+  });
+});
+
+describe('captions', () => {
+  it('reads "Table 5." that continues a sentence as text, and a real caption as a caption', async () => {
+    const { analyzeDocument } = await import('../src/engine');
+    const fragment = (text: string, y: number) => ({
+      page: 0, text, x: 72, top: y, width: text.length * 5, height: 10, baseline: y + 8, fontSize: 10, fontName: 'f',
+      chars: [...text].map((_, i) => ({ x: 72 + 5 * i, y, w: 5, h: 10 })),
+    });
+    const page = {
+      page: 0, width: 612, height: 792, rules: [],
+      fragments: [
+        fragment('Longer inputs involve more complex semantics. The average accuracy is', 200),
+        fragment('notably lower on longer reviews, as evidenced in Appendix', 212),
+        fragment('Table 5. Therefore, to verify our method we rearrange the data.', 224),
+        fragment('The results are shown in the figure and in the table below.', 236),
+        fragment('Table 6: Accuracy of the method on each of the datasets.', 280),
+      ],
+    };
+    const units = analyzeDocument([page]).units.map((u) => [u.kind, u.text]);
+    expect(units[0][0]).toBe('paragraph');
+    expect(units[0][1]).toContain('as evidenced in Appendix Table 5. Therefore, to verify');
+    expect(units).toContainEqual(['caption', 'Table 6: Accuracy of the method on each of the datasets.']);
+  });
+});
+
 describe('list bullets', () => {
   it('are not read aloud', async () => {
     const { buildUnits } = await import('../src/engine/units');
@@ -286,6 +418,12 @@ describe('sentences', () => {
     const text = 'We follow Smith et al. in this. Dr. Jones agrees with J. Doe. Done.';
     const s = splitSentences(text).map((r) => text.slice(r.start, r.end));
     expect(s).toEqual(['We follow Smith et al. in this.', 'Dr. Jones agrees with J. Doe.', 'Done.']);
+  });
+
+  it('keeps a section number with its heading', () => {
+    for (const text of ['6. Related Work', '6.1. Knowledge Distillation', '1. NOSCOPE achieves higher throughput.']) {
+      expect(splitSentences(text).map((r) => text.slice(r.start, r.end))).toEqual([text]);
+    }
   });
 });
 

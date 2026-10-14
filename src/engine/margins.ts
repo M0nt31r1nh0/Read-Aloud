@@ -66,5 +66,19 @@ export function findMarginLines(pages: MarginPage[]): Set<Line> {
     // (a section title) is not enough.
     if (pageNumber || pagesByKey.get(c.key)!.size >= (c.edge ? 3 : 2)) dropped.add(c.line);
   }
+  // Nothing is read from beyond a running header or footer: text found there
+  // is off the printed page or invisible (a figure's hidden label).
+  for (const p of pages) {
+    // Running headers proper: words at the very edge, not a figure's
+    // repeated axis labels ("1.00") just inside it.
+    const marks = p.lines.filter((l) => dropped.has(l) && /\p{L}{2}/u.test(lineText(l)));
+    const header = marks.filter((l) => bottom(l.box) < p.height * MARGIN);
+    const footer = marks.filter((l) => l.box.y > p.height * (1 - MARGIN));
+    const headerTop = header.length ? Math.min(...header.map((l) => l.box.y)) : -Infinity;
+    const footerBottom = footer.length ? Math.max(...footer.map((l) => bottom(l.box))) : Infinity;
+    for (const line of p.lines) {
+      if (bottom(line.box) <= headerTop + 0.5 || line.box.y >= footerBottom - 0.5) dropped.add(line);
+    }
+  }
   return dropped;
 }

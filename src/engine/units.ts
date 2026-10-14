@@ -14,6 +14,9 @@ import type { AnalyzeOptions, CharBox, Line, PageLayout, ReadingUnit, Rect, Rule
 
 // "Figure 3:", "Fig. 3.", "Table 2:", IEEE "TABLE IV" / "FIG. 2." (also alone on
 // their line). "Table 1 shows …" in body text does not match.
+/** A caption's first line; not a sentence that wraps onto "Table 5. …". */
+export const isCaptionLine = (line: Line, text: string) => !line.inText && CAPTION_START.test(text);
+
 export const CAPTION_START = /^(?:Figure|Fig\.|Table|FIGURE|FIG\.|TABLE)\s*(?:\d+|[IVXLC]+)(?:[.:]|\s*$)/;
 // Section numbers: "3", "3.2", "3.2.1", "IV." — not "0.30." or "12 GPUs" (those
 // are rejected by context in isHeading). Letter numbering ("A. Proofs") is
@@ -192,7 +195,7 @@ export function buildUnits(
       return;
     }
     const heading = isHeading(stream, i, bodyFont, pitch, bodyFontName);
-    const caption = CAPTION_START.test(s.text);
+    const caption = isCaptionLine(s.line, s.text);
     if (heading) inBibliography = BIBLIOGRAPHY.test(s.text.trim());
 
     if (aside && asidePrev) {
@@ -371,7 +374,7 @@ function mathLines(stream: Placed[], bodyFont: number, pitch: number): boolean[]
   const weak = stream.map(
     (s) =>
       s.line.fontSize < 1.15 * bodyFont &&
-      !CAPTION_START.test(s.text) &&
+      !isCaptionLine(s.line, s.text) &&
       ((s.text.replace(/\s/g, '').length <= 12 && words(s.text) <= 1 && !/[.!?]$/.test(s.text)) ||
         (s.text.length <= 60 && identifiers(s.text))),
   );
