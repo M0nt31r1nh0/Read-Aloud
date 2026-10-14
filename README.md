@@ -145,6 +145,9 @@ working. `deploy/` is not committed.
 | **Stop** | Stop reading and clear the highlights |
 | **Speed** | Reading speed, 0.5× to 2× |
 | **Voice** | Any voice installed on your computer |
+| **− / 100% / +** | Zoom out / in; click the percentage to fit the page to the window width. The zoom is remembered |
+| <kbd>Ctrl</kbd> (<kbd>⌘</kbd> on a Mac) + <kbd>+</kbd> / <kbd>−</kbd> / <kbd>0</kbd> | Zoom in / out / fit to width |
+| Pinch, or <kbd>Ctrl</kbd> + scroll | Zoom around the pointer |
 | <kbd>Space</kbd> | Play / pause |
 | <kbd>←</kbd> / <kbd>→</kbd> | Previous / next sentence |
 | <kbd>Esc</kbd> | Close the Filters menu |

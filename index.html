@@ -18,6 +18,12 @@
       <label>Speed <input id="rate" type="range" min="0.5" max="2" step="0.1" value="1" /> <output id="rate-value">1.0×</output></label>
       <select id="voice" aria-label="Voice"></select>
       <span class="divider"></span>
+      <div class="zoom" role="group" aria-label="Zoom">
+        <button id="zoom-out" type="button" title="Zoom out (Ctrl −)" aria-label="Zoom out">−</button>
+        <button id="zoom-level" type="button" aria-pressed="true">Fit</button>
+        <button id="zoom-in" type="button" title="Zoom in (Ctrl +)" aria-label="Zoom in">+</button>
+      </div>
+      <span class="divider"></span>
       <div class="filters">
         <button id="filters-button" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="filters-panel">
           Filters <span aria-hidden="true">▾</span>

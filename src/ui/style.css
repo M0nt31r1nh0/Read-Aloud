@@ -135,6 +135,21 @@ select {
   color: var(--muted);
 }
 
+.zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+#zoom-level {
+  min-width: 58px;
+  font-variant-numeric: tabular-nums;
+}
+
+#zoom-level[aria-pressed='true'] {
+  border-color: var(--accent);
+}
+
 /* Which environment this is: the deployed version, or "Development" for the
    testing server where fixes are made. */
 .version {
@@ -228,13 +243,16 @@ main {
   padding: 16px;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  /* Centred with auto margins (on .page), not align-items: a page zoomed
+     wider than the view must scroll to its left edge too. */
+  align-items: flex-start;
   gap: 16px;
 }
 
 .page {
   position: relative;
   flex: none;
+  margin-inline: auto;
   background: #fff;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
 }

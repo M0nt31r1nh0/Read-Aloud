@@ -30,7 +30,13 @@ const rateInput = $<HTMLInputElement>('rate');
 interface PageView {
   root: HTMLDivElement;
   overlay: HTMLDivElement;
+  /** CSS pixels per PDF point. */
   scale: number;
+  /** Page width in PDF points. */
+  width: number;
+  /** The scale the canvas was last drawn at (null: not drawn yet). */
+  paintedScale: number | null;
+  setScale(scale: number): void;
   paint(): Promise<void>;
 }
 
@@ -99,6 +105,7 @@ async function openDocument(data: ArrayBuffer | Uint8Array, name: string) {
     pageTexts.push(await extractPage(page, i - 1, widths, pdfjs.OPS));
     setStatus(`Analysing page ${i} of ${doc.numPages}…`);
   }
+  updateZoomLabel();
   await dictionaryReady;
   if (token !== renderToken) return;
   analyze();
@@ -107,43 +114,184 @@ async function openDocument(data: ArrayBuffer | Uint8Array, name: string) {
 
 function createPageView(page: pdfjs.PDFPageProxy, index: number): PageView {
   const base = page.getViewport({ scale: 1 });
-  const available = Math.min(900, pagesEl.clientWidth - 32);
-  const scale = Math.max(0.5, available / base.width);
-  const viewport = page.getViewport({ scale });
-
   const root = document.createElement('div');
   root.className = 'page';
-  root.style.width = `${viewport.width}px`;
-  root.style.height = `${viewport.height}px`;
   const overlay = document.createElement('div');
   overlay.className = 'overlay';
   root.append(overlay);
   pagesEl.append(root);
 
+  let task: ReturnType<pdfjs.PDFPageProxy['render']> | null = null;
+  const view: PageView = {
+    root,
+    overlay,
+    scale: 1,
+    width: base.width,
+    paintedScale: null,
+    // Resizing is instant: the old drawing stretches until it is redrawn.
+    setScale(scale) {
+      view.scale = scale;
+      root.style.width = `${base.width * scale}px`;
+      root.style.height = `${base.height * scale}px`;
+    },
+    async paint() {
+      task?.cancel();
+      const scale = view.scale;
+      view.paintedScale = scale;
+      const viewport = page.getViewport({ scale });
+      // Very large zooms are drawn at a lower pixel density: one canvas of
+      // hundreds of megabytes would not be drawn at all.
+      const dpr = Math.min(window.devicePixelRatio || 1, Math.sqrt(MAX_CANVAS_PIXELS / (viewport.width * viewport.height)));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.floor(viewport.width * dpr);
+      canvas.height = Math.floor(viewport.height * dpr);
+      task = page.render({ canvas, viewport, transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined });
+      try {
+        await task.promise;
+      } catch (err) {
+        if (err instanceof Error && err.name === 'RenderingCancelledException') return;
+        throw err;
+      }
+      root.querySelector('canvas')?.remove();
+      root.prepend(canvas);
+    },
+  };
+  view.setScale(scaleFor(view));
+
   overlay.addEventListener('click', (e) => {
     if (!analysis) return;
     const r = overlay.getBoundingClientRect();
-    const hit = hitTest(analysis.units, index, (e.clientX - r.left) / scale, (e.clientY - r.top) / scale);
+    const hit = hitTest(analysis.units, index, (e.clientX - r.left) / view.scale, (e.clientY - r.top) / view.scale);
     if (hit) {
       followReading(false);
       reader.play(hit);
     }
   });
-
-  const paint = async () => {
-    const dpr = window.devicePixelRatio || 1;
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.floor(viewport.width * dpr);
-    canvas.height = Math.floor(viewport.height * dpr);
-    root.prepend(canvas);
-    await page.render({
-      canvas,
-      viewport,
-      transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined,
-    }).promise;
-  };
-  return { root, overlay, scale, paint };
+  return view;
 }
+
+// ---------- zoom ----------
+
+/** 100% is the paper's real size: 96 CSS pixels per inch, 72 PDF points. */
+const POINT = 96 / 72;
+const ZOOM_STEPS = [50, 67, 75, 90, 100, 110, 125, 150, 175, 200, 250, 300, 400];
+const MIN_ZOOM = 25;
+const MAX_ZOOM = 400;
+const MAX_CANVAS_PIXELS = 16_000_000;
+const zoomLabel = $<HTMLButtonElement>('zoom-level');
+
+/** "fit": the page fills the width of the view; otherwise a percentage. */
+let zoom: number | 'fit' = loadZoom();
+
+function loadZoom(): number | 'fit' {
+  try {
+    const saved = Number(localStorage.getItem('read-aloud:zoom'));
+    return saved >= MIN_ZOOM && saved <= MAX_ZOOM ? saved : 'fit';
+  } catch {
+    return 'fit';
+  }
+}
+
+function fitScale(view: { width: number }) {
+  return Math.max(0.5, Math.min(900, pagesEl.clientWidth - 32) / view.width);
+}
+
+function scaleFor(view: { width: number }) {
+  return zoom === 'fit' ? fitScale(view) : (zoom / 100) * POINT;
+}
+
+/** The zoom shown: the first page's, as a percentage of real size. */
+function currentPercent() {
+  return (scaleFor(views[0] ?? { width: 612 }) / POINT) * 100;
+}
+
+function updateZoomLabel() {
+  zoomLabel.textContent = `${Math.round(currentPercent())}%`;
+  zoomLabel.setAttribute('aria-pressed', String(zoom === 'fit'));
+  zoomLabel.title = zoom === 'fit' ? 'Fitted to the width of the window' : 'Fit to width (Ctrl+0)';
+}
+
+/**
+ * Change the zoom keeping the point under `anchor` (the pointer, for pinch
+ * and Ctrl+wheel) in place, or else the word being read, or the middle of
+ * the view.
+ */
+function setZoom(next: number | 'fit', anchor?: { x: number; y: number }) {
+  zoom = next === 'fit' ? 'fit' : Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, next));
+  try {
+    localStorage.setItem('read-aloud:zoom', String(zoom));
+  } catch {
+    // Zoom is then not remembered; nothing else depends on it.
+  }
+  updateZoomLabel();
+  if (!views.length) return;
+
+  const rect = pagesEl.getBoundingClientRect();
+  const word = following.pages && reader.state !== 'idle' ? pagesEl.querySelector('.hl-word')?.getBoundingClientRect() : undefined;
+  const at = anchor ?? (word ? { x: word.left + word.width / 2, y: word.top + word.height / 2 } : { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
+  let fixed: { view: PageView; x: number; y: number } | null = null;
+  for (const view of views) {
+    const r = view.root.getBoundingClientRect();
+    if (r.bottom < at.y) continue;
+    fixed = { view, x: (at.x - r.left) / view.scale, y: Math.max(0, (at.y - r.top) / view.scale) };
+    break;
+  }
+
+  for (const view of views) view.setScale(scaleFor(view));
+  redrawHighlights();
+  renderLayout();
+  if (fixed) {
+    const r = fixed.view.root.getBoundingClientRect();
+    pagesEl.scrollTop += r.top + fixed.y * fixed.view.scale - at.y;
+    pagesEl.scrollLeft += r.left + fixed.x * fixed.view.scale - at.x;
+  }
+  scheduleRepaint();
+}
+
+function zoomStep(direction: 1 | -1) {
+  const now = currentPercent();
+  const next = direction > 0 ? ZOOM_STEPS.find((z) => z > now * 1.02) : [...ZOOM_STEPS].reverse().find((z) => z < now / 1.02);
+  setZoom(next ?? (direction > 0 ? MAX_ZOOM : MIN_ZOOM));
+}
+
+// Pages are redrawn sharp once the zoom has settled (a pinch sends many steps).
+let repaintTimer = 0;
+function scheduleRepaint() {
+  clearTimeout(repaintTimer);
+  repaintTimer = window.setTimeout(() => {
+    for (const view of views) {
+      if (view.paintedScale !== null && view.paintedScale !== view.scale) painter.observe(view.root);
+    }
+  }, 150);
+}
+
+$('zoom-in').addEventListener('click', () => zoomStep(1));
+$('zoom-out').addEventListener('click', () => zoomStep(-1));
+zoomLabel.addEventListener('click', () => setZoom('fit'));
+// Pinch on a trackpad (and Ctrl+wheel) zooms the document, not the window.
+pagesEl.addEventListener(
+  'wheel',
+  (e) => {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    setZoom(currentPercent() * Math.exp(-e.deltaY * 0.01), { x: e.clientX, y: e.clientY });
+  },
+  { passive: false },
+);
+document.addEventListener('keydown', (e) => {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+  if (e.key === '=' || e.key === '+') zoomStep(1);
+  else if (e.key === '-' || e.key === '_') zoomStep(-1);
+  else if (e.key === '0') setZoom('fit');
+  else return;
+  e.preventDefault();
+});
+let resizeTimer = 0;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = window.setTimeout(() => zoom === 'fit' && setZoom('fit'), 100);
+});
+updateZoomLabel();
 
 function analyze() {
   const options: AnalyzeOptions = {
@@ -165,7 +313,18 @@ function analyze() {
 
 // ---------- highlighting ----------
 
+/** What is highlighted, to draw it again at a new zoom. */
+const drawn: Partial<Record<'sentence' | 'word', [number, number, number]>> = {};
+
+function redrawHighlights() {
+  for (const kind of ['sentence', 'word'] as const) {
+    const range = drawn[kind];
+    if (range) drawRects(...range, kind);
+  }
+}
+
 function clearHighlights(kind?: 'sentence' | 'word') {
+  for (const k of kind ? [kind] : (['sentence', 'word'] as const)) delete drawn[k];
   const selector = kind ? `.hl-${kind}` : '.hl-sentence, .hl-word';
   for (const el of pagesEl.querySelectorAll(selector)) el.remove();
 }
@@ -174,6 +333,7 @@ function drawRects(unitIndex: number, start: number, end: number, kind: 'sentenc
   clearHighlights(kind);
   const unit = analysis?.units[unitIndex];
   if (!unit) return [];
+  drawn[kind] = [unitIndex, start, end];
   return rectsFor(unit, start, end).map((r) => {
     const view = views[r.page];
     const el = document.createElement('div');
@@ -231,7 +391,7 @@ for (const [container, which] of [
   [pagesEl, 'pages'],
   [transcriptEl, 'transcript'],
 ] as const) {
-  container.addEventListener('wheel', () => letGo(which), { passive: true });
+  container.addEventListener('wheel', (e) => !e.ctrlKey && letGo(which), { passive: true });
   container.addEventListener('touchmove', () => letGo(which), { passive: true });
   // A press on the container itself, not on its content: the scrollbar.
   container.addEventListener('pointerdown', (e) => {
@@ -291,9 +451,14 @@ window.addEventListener('resize', updateBackButton);
  * the view jump to the reading-order list and back at every new sentence.
  */
 function revealIn(container: HTMLElement, el: HTMLElement, align: 'center' | 'nearest', behavior: ScrollBehavior) {
-  if (container.scrollHeight <= container.clientHeight) return;
   const view = container.getBoundingClientRect();
   const target = el.getBoundingClientRect();
+  // Zoomed in, a page can be wider than the view: bring the word into view
+  // sideways too.
+  if (container.scrollWidth > container.clientWidth && (target.left < view.left || target.right > view.right)) {
+    container.scrollBy({ left: target.left + target.width / 2 - (view.left + view.width / 2), behavior: 'auto' });
+  }
+  if (container.scrollHeight <= container.clientHeight) return;
   const margin = Math.min(60, view.height / 4);
   if (target.top >= view.top + margin && target.bottom <= view.bottom - margin) return;
   const delta =
