@@ -135,6 +135,62 @@ select {
   color: var(--muted);
 }
 
+/* Which environment this is: the deployed version, or "Development" for the
+   testing server where fixes are made. */
+.version {
+  flex: none;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.version.dev {
+  border-color: #d97706;
+  background: rgba(217, 119, 6, 0.12);
+  color: #b45309;
+  font-weight: 600;
+}
+
+/* "A new version has been deployed": in a corner, so reading goes on. */
+.update-popup {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 30;
+  width: min(380px, calc(100vw - 32px));
+  padding: 14px 16px;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22);
+}
+
+.update-popup p {
+  margin: 6px 0 0;
+}
+
+.update-meta,
+.update-hint {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.update-notes {
+  white-space: pre-line;
+}
+
+.update-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
 main {
   flex: 1;
   min-height: 0;

@@ -14,6 +14,8 @@ import {
 } from '../engine';
 import { Reader, type ReaderState } from '../speech/reader';
 import { hitTest, rectsFor } from './highlight';
+import { saveSession, takeSession } from './session';
+import { watchForUpdates } from './updates';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -46,6 +48,8 @@ const dictionaryReady = fetch(`${import.meta.env.BASE_URL}dictionary.txt`)
 let analysis: DocumentAnalysis | null = null;
 let views: PageView[] = [];
 let renderToken = 0;
+/** The open PDF's bytes (pdf.js takes over the buffer it is given). */
+let openFile: { name: string; data: Uint8Array } | null = null;
 
 const reader = new Reader({
   onState: (state) => updatePlayButton(state),
@@ -76,8 +80,10 @@ async function openDocument(data: ArrayBuffer | Uint8Array, name: string) {
   reader.stop();
   painter.disconnect();
   setStatus(`Loading ${name}…`);
-  const doc = await pdfjs.getDocument({ data }).promise;
+  const bytes = new Uint8Array(data).slice();
+  const doc = await pdfjs.getDocument({ data: bytes.slice() }).promise;
   if (token !== renderToken) return;
+  openFile = { name, data: bytes };
   pagesEl.replaceChildren();
   pagesEl.scrollTop = 0;
   views = [];
@@ -217,7 +223,9 @@ function revealIn(container: HTMLElement, el: HTMLElement, align: 'center' | 'ne
       : target.top < view.top + margin
         ? target.top - (view.top + margin)
         : target.bottom - (view.bottom - margin);
-  container.scrollBy({ top: delta, behavior });
+  // A far jump (reading restarted pages away) is instant: a smooth scroll
+  // that every new word restarts would crawl there.
+  container.scrollBy({ top: delta, behavior: Math.abs(delta) > container.clientHeight ? 'auto' : behavior });
 }
 
 // ---------- transcript and layout debug ----------
@@ -377,6 +385,65 @@ document.addEventListener('keydown', (e) => {
 function isPdf(file: File) {
   return file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
 }
+
+// ---------- environments and updates ----------
+
+const FILTER_IDS = ['opt-layout', 'opt-citations', 'opt-captions', 'opt-tables', 'opt-abbrev', 'opt-footnotes', 'opt-equations'];
+const versionEl = $<HTMLElement>('version');
+const appVersion: string | undefined = import.meta.env.VITE_APP_VERSION;
+if (import.meta.env.DEV) {
+  // The testing environment, where fixes are made: told apart at a glance.
+  versionEl.textContent = 'Development';
+  versionEl.classList.add('dev');
+  document.title += ' (development)';
+} else if (appVersion) {
+  versionEl.textContent = `Version ${appVersion}`;
+  watchForUpdates(appVersion, saveCurrentSession);
+} else {
+  versionEl.hidden = true;
+}
+
+async function saveCurrentSession() {
+  if (!openFile) return;
+  const voice = speechSynthesis.getVoices()[Number(voiceSelect.value)];
+  await saveSession({
+    ...openFile,
+    position: reader.position,
+    options: Object.fromEntries(FILTER_IDS.map((id) => [id, $<HTMLInputElement>(id).checked])),
+    rate: Number(rateInput.value),
+    voice: voice?.name ?? '',
+    scrollTop: pagesEl.scrollTop,
+    savedAt: Date.now(),
+  });
+}
+
+// After "Update now": reopen the PDF where it was, with the same settings.
+void takeSession().then(async (session) => {
+  if (!session) return;
+  for (const [id, checked] of Object.entries(session.options)) {
+    const box = document.getElementById(id);
+    if (box instanceof HTMLInputElement) box.checked = checked;
+  }
+  rateInput.value = String(session.rate);
+  rateInput.dispatchEvent(new Event('input'));
+  const restoreVoice = () => {
+    const index = speechSynthesis.getVoices().findIndex((v) => v.name === session.voice);
+    if (index < 0) return false;
+    voiceSelect.value = String(index);
+    reader.setVoice(speechSynthesis.getVoices()[index]);
+    return true;
+  };
+  if (!restoreVoice()) speechSynthesis.addEventListener('voiceschanged', restoreVoice, { once: true });
+  try {
+    await openDocument(session.data, session.name);
+  } catch (err) {
+    showError(err);
+    return;
+  }
+  pagesEl.scrollTop = session.scrollTop;
+  reader.moveTo(session.position);
+  setStatus(`Updated to version ${appVersion ?? 'new'}. ${session.name} is open where you left it: press Play to continue.`);
+});
 
 function setStatus(text: string) {
   statusEl.textContent = text;

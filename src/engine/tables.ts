@@ -113,7 +113,8 @@ function ruledGrid(lines: Line[], vertical: Rule[], horizontal: Rule[], box: Rec
   return { cells, rows: Math.max(1, ys.length - 1), cols: Math.max(1, xs.length - 1) };
 }
 
-function alignedGrid(lines: Line[], horizontal: Rule[] = []): Grid {
+function alignedGrid(tableLines: Line[], horizontal: Rule[] = []): Grid {
+  let lines = tableLines;
   // Columns: separated by vertical bands of white space that (almost) no
   // line crosses; the few lines that do cross one span several columns.
   const x0 = Math.min(...lines.map((l) => l.box.x));
@@ -127,19 +128,23 @@ function alignedGrid(lines: Line[], horizontal: Rule[] = []): Grid {
     if (covered <= crossing && x < x1) gapStart ??= x;
     else if (gapStart !== null) {
       const b = (gapStart + x) / 2;
-      // A real boundary has cells starting after it, not just a ragged edge.
+      // A real boundary has cells on both sides, not just a ragged edge (a
+      // centred label column is ragged on the left as well).
       const starts = lines.some((l) => l.box.x >= x - 1);
-      if (x - gapStart >= 0.4 * fontSize && starts) boundaries.push(b);
+      const ends = lines.some((l) => right(l.box) <= gapStart! + 1);
+      if (x - gapStart >= 0.4 * fontSize && starts && ends) boundaries.push(b);
       gapStart = null;
     }
   }
-  const colsOf = (line: Line) => {
+  lines = lines.flatMap((l) => splitHeaderLine(l, lines, boundaries, horizontal));
+  const rawCols = (line: Line) => {
+    const fixed = headerColumn.get(line);
+    if (fixed !== undefined) return [fixed, fixed];
     const tol = 0.25 * line.fontSize;
     const c0 = boundaries.filter((b) => b <= line.box.x + tol).length;
     const c1 = boundaries.filter((b) => b < right(line.box) - tol).length;
     return [c0, Math.max(c0, c1)];
   };
-  const spanning = new Set(lines.filter((l) => colsOf(l)[1] > colsOf(l)[0]));
 
   // Rows. Visual rows by baseline; a logical row is anchored by a label in
   // the first column. Labels are either at the top of their row (wrapped
@@ -151,6 +156,26 @@ function alignedGrid(lines: Line[], horizontal: Rule[] = []): Grid {
     if (row && Math.abs(line.baseline - row[0].baseline) <= 0.4 * line.fontSize) row.push(line);
     else visual.push([line]);
   }
+  // Which columns a line spans: those whose cells (the lines inside one
+  // column) it overlaps. A header or label wider than its column reaches into
+  // the white space beside it, past the middle of the gap, without spanning
+  // the next column ("Accuracy (%)" over left-aligned numbers).
+  const cores = new Map<number, { x0: number; x1: number }>();
+  for (const line of lines) {
+    const [c0, c1] = rawCols(line);
+    if (c0 !== c1) continue;
+    const core = cores.get(c0);
+    cores.set(c0, { x0: Math.min(core?.x0 ?? Infinity, line.box.x), x1: Math.max(core?.x1 ?? -Infinity, right(line.box)) });
+  }
+  const colsOf = (line: Line) => {
+    const [c0, c1] = rawCols(line);
+    if (c0 === c1) return [c0, c1];
+    const hit = [...cores.entries()]
+      .filter(([, core]) => Math.min(core.x1, right(line.box)) - Math.max(core.x0, line.box.x) > 1)
+      .map(([c]) => c);
+    return hit.length ? [Math.max(c0, Math.min(...hit)), Math.min(c1, Math.max(...hit))].sort((a, b) => a - b) : [c0, c1];
+  };
+  const spanning = new Set(lines.filter((l) => colsOf(l)[1] > colsOf(l)[0]));
   const isAnchor = (l: Line) => colsOf(l)[0] === 0 && !spanning.has(l);
 
   // A rule with text both above and below it (booktabs' \midrule) ends the
@@ -181,6 +206,59 @@ function alignedGrid(lines: Line[], horizontal: Rule[] = []): Grid {
 }
 
 /**
+ * Column names set closer together than a cell gap ("ISEAR RT-Polarity
+ * FEVER") come as one line across the columns. In the header (the top row,
+ * or above the rule under it) such a line is split into its words, each
+ * going to the column under its centre, if that gives every column it spans
+ * a name of its own.
+ */
+function splitHeaderLine(line: Line, lines: Line[], boundaries: number[], horizontal: Rule[]): Line[] {
+  const tol = 0.25 * line.fontSize;
+  const inner = boundaries.filter((b) => b > line.box.x + tol && b < right(line.box) - tol);
+  if (inner.length < 2) return [line];
+  const top = Math.min(...lines.map((l) => l.baseline));
+  const underHeader = horizontal.some((h) => h.y0 >= bottom(line.box) - 1 && h.y0 <= bottom(line.box) + line.fontSize);
+  if (line.baseline > top + 0.4 * line.fontSize && !underHeader) return [line];
+
+  const chars = line.fragments.flatMap((f) => [...f.text].map((ch, i) => ({ f, ch, box: f.chars[i] })));
+  if (chars.some((c) => !c.box)) return [line];
+  const words: (typeof chars)[] = [];
+  chars.forEach((c, k) => {
+    const gap = k > 0 && chars[k - 1].f !== c.f && c.box.x - right(chars[k - 1].box) > 0.15 * line.fontSize;
+    if (c.ch === ' ') words.push([]);
+    else {
+      if (!words.length || gap) words.push([]);
+      words[words.length - 1].push(c);
+    }
+  });
+  const columnOf = (word: typeof chars) => {
+    const center = (word[0].box.x + right(word[word.length - 1].box)) / 2;
+    return boundaries.filter((b) => b < center).length;
+  };
+  const groups: { column: number; chars: typeof chars }[] = [];
+  for (const word of words.filter((w) => w.length)) {
+    const column = columnOf(word);
+    const last = groups[groups.length - 1];
+    if (last && last.column === column) last.chars.push({ ...word[0], ch: ' ', box: word[0].box }, ...word);
+    else groups.push({ column, chars: [...word] });
+  }
+  if (groups.length !== inner.length + 1 || groups.some((g, i) => i && g.column <= groups[i - 1].column)) return [line];
+  return groups.map(({ column, chars: part }) => {
+    const fragments = [...new Set(part.map((c) => c.f))].map((f) => {
+      const own = part.filter((c) => c.f === f);
+      const x = own[0].box.x;
+      return { ...f, text: own.map((c) => c.ch).join(''), chars: own.map((c) => c.box), x, width: right(own[own.length - 1].box) - x };
+    });
+    const name: Line = { ...makeLine(fragments), role: line.role, block: line.block };
+    headerColumn.set(name, column);
+    return name;
+  });
+}
+
+/** Column names split off a header line, with the column each one names. */
+const headerColumn = new WeakMap<Line, number>();
+
+/**
  * Logical rows. Each row is anchored by its label (first-column text, with
  * wrapped label lines merged). The other columns' lines are grouped into
  * cells by text — a cell starts with a capital, digit or bullet, its wrapped
@@ -193,12 +271,16 @@ function assignRows(visual: Line[][], isAnchor: (l: Line) => boolean, columnOf: 
   const text = (l: Line) => l.fragments.map((f) => f.text).join('').trim();
 
   const anchors: Line[][] = [];
+  const startsCell = (l: Line) => /^[\p{Lu}\p{N}•·(\[]/u.test(text(l));
   for (const row of visual) {
     const labels = row.filter(isAnchor);
     if (!labels.length) continue;
     const prev = anchors[anchors.length - 1];
     const last = prev?.[prev.length - 1];
-    if (last && labels[0].baseline - last.baseline <= 1.3 * labels[0].fontSize && isWrapped(last)) prev.push(...labels);
+    // A wrapped label goes on in a row where no other cell starts; a row
+    // with its own values ("Random (N=500)  0.629  0.882") is a new row.
+    const ownValues = row.some((l) => !isAnchor(l) && startsCell(l));
+    if (last && labels[0].baseline - last.baseline <= 1.3 * labels[0].fontSize && isWrapped(last) && !ownValues) prev.push(...labels);
     else anchors.push([...labels]);
   }
 

@@ -37,7 +37,7 @@ export function orderLines(lines: Line[], page: number): { ordered: Line[]; bloc
 }
 
 function layoutRegion(lines: Line[], depth: number, emit: (lines: Line[], kind: Block['kind']) => void) {
-  const slabs = cutSlabs(lines);
+  const slabs = cutSlabs(lines).flatMap(splitAtCrossingLines);
   const gutters = slabs.map(findGutters);
 
   // Grow a column region around every slab that has a gutter.
@@ -79,10 +79,12 @@ function layoutRegion(lines: Line[], depth: number, emit: (lines: Line[], kind: 
 /** Horizontal cuts at vertical white space taller than half a line. */
 function cutSlabs(lines: Line[]): Line[][] {
   const sorted = [...lines].sort(byTop);
-  const minGap = 0.5 * median(sorted.map((l) => l.box.h), 10);
   const slabs: Line[][] = [];
   let slabBottom = -Infinity;
   for (const line of sorted) {
+    // Relative to the line's own size: a page of tiny table text must not make
+    // the normal leading between body lines look like a break.
+    const minGap = 0.5 * line.box.h;
     if (slabs.length && line.box.y <= slabBottom + minGap) {
       slabs[slabs.length - 1].push(line);
       slabBottom = Math.max(slabBottom, bottom(line.box));
@@ -94,24 +96,108 @@ function cutSlabs(lines: Line[]): Line[][] {
   return slabs;
 }
 
+/**
+ * A full-width line (a title, a wide figure caption) set close to a
+ * two-column region ends up in the same slab and hides the gutter. If a
+ * gutter appears once the wide lines are ignored, split the slab at them:
+ * each run of lines between wide lines becomes its own slab.
+ */
+function splitAtCrossingLines(slab: Line[]): Line[][] {
+  if (slab.length < 6 || findGutters(slab).length) return [slab];
+  // Look for the gutter among the narrower lines (a full-width abstract can be
+  // many lines), allowing a few of them to cross (centred author lines).
+  const x0 = Math.min(...slab.map((l) => l.box.x));
+  const width = Math.max(...slab.map((l) => right(l.box))) - x0;
+  const narrow = slab.filter((l) => l.box.w < 0.6 * width);
+  const gutters = narrow.length >= 6 ? tolerantGutters(narrow) : [];
+  if (!gutters.length) return [slab];
+  // Anything reaching into the gutter: lines across it (titles) and stray
+  // marks inside it (a centred page number).
+  const crosses = (l: Line) => gutters.some((g) => l.box.x < g.end - 1 && right(l.box) > g.start + 1);
+  const parts: Line[][] = [];
+  let run: Line[] = [];
+  for (const line of [...slab].sort(byTop)) {
+    if (crosses(line)) {
+      if (run.length) parts.push(run);
+      parts.push([line]);
+      run = [];
+    } else run.push(line);
+  }
+  if (run.length) parts.push(run);
+  // Only if the split really exposes a column gutter.
+  return parts.some((part) => findGutters(part).length) ? parts : [slab];
+}
+
+/**
+ * Gutters that some lines (up to a quarter: titles, a centred block of
+ * author names and affiliations, wide captions) are allowed to cross, with
+ * text columns on both sides. The caller only accepts the result if
+ * splitting at the crossing lines exposes a real gutter.
+ */
+function tolerantGutters(slab: Line[]): Gutter[] {
+  const fontSize = textSize(slab);
+  const allowed = Math.max(2, Math.floor(0.25 * slab.length));
+  const x0 = Math.min(...slab.map((l) => l.box.x));
+  const x1 = Math.max(...slab.map((l) => right(l.box)));
+  const found: Gutter[] = [];
+  let run: { x: number; covered: number }[] = [];
+  // Within each stretch of low coverage, the gutter is where coverage is
+  // lowest: the stretch also takes in the ragged ends of the column lines.
+  const close = () => {
+    const least = Math.min(...run.map((r) => r.covered));
+    let start: number | null = null;
+    for (const r of [...run, { x: Infinity, covered: Infinity }]) {
+      if (r.covered === least) start ??= r.x;
+      else if (start !== null) {
+        const end = Math.min(r.x, x1);
+        if (end - start >= 0.6 * fontSize) found.push({ start, end });
+        start = null;
+      }
+    }
+    run = [];
+  };
+  for (let x = x0; x <= x1; x += 0.5) {
+    const covered = slab.filter((l) => l.box.x < x && right(l.box) > x).length;
+    if (covered <= allowed && x < x1) run.push({ x, covered });
+    else if (run.length) close();
+  }
+  return found.filter((g) => {
+    const text = (side: Line[]) => side.filter((l) => l.box.w >= 6 * fontSize).length >= 3;
+    return text(slab.filter((l) => right(l.box) <= g.start + 0.5)) && text(slab.filter((l) => l.box.x >= g.end - 0.5));
+  });
+}
+
+/**
+ * The font size most of the slab's text is set in: the median weighted by
+ * line width, so a figure's many tiny tick labels do not count for much.
+ */
+function textSize(slab: Line[]): number {
+  const sorted = [...slab].sort((a, b) => a.fontSize - b.fontSize);
+  const half = sorted.reduce((sum, l) => sum + l.box.w, 0) / 2;
+  let seen = 0;
+  for (const l of sorted) if ((seen += l.box.w) >= half) return l.fontSize;
+  return median(slab.map((l) => l.fontSize), 10);
+}
+
 /** Vertical white space with real text columns on both sides. */
 function findGutters(slab: Line[]): Gutter[] {
   if (slab.length < 4) return [];
-  const fontSize = median(slab.map((l) => l.fontSize), 10);
+  const fontSize = textSize(slab);
   const spans = slab.map((l) => ({ start: l.box.x, end: right(l.box) })).sort((a, b) => a.start - b.start);
 
   const gaps: Gutter[] = [];
   let reach = spans[0].end;
   for (const s of spans.slice(1)) {
-    if (s.start > reach && s.start - reach >= fontSize) gaps.push({ start: reach, end: s.start });
+    if (s.start > reach && s.start - reach >= 0.6 * fontSize) gaps.push({ start: reach, end: s.start });
     reach = Math.max(reach, s.end);
   }
 
   return gaps.filter((g) => {
     const left = slab.filter((l) => right(l.box) <= g.start + 0.5);
     const rightSide = slab.filter((l) => l.box.x >= g.end - 0.5);
-    const isColumn = (side: Line[]) =>
-      side.length >= 2 && median(side.map((l) => l.box.w), 0) >= 3 * fontSize;
+    // A real column has text lines, even if a figure's tick labels and
+    // legend entries (many short lines) sit in it too.
+    const isColumn = (side: Line[]) => side.filter((l) => l.box.w >= 6 * fontSize).length >= 2;
     return isColumn(left) && isColumn(rightSide);
   });
 }

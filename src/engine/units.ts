@@ -12,16 +12,20 @@ import { tableChars } from './tables';
 import { collapseSpaces, lineChars, lineText, normalizeChars, replaceAll, type SpokenChar } from './text';
 import type { AnalyzeOptions, CharBox, Line, PageLayout, ReadingUnit, Rect, Rule, UnitKind } from './types';
 
-export const CAPTION_START = /^(?:Figure|Fig\.|Table)\s*\d+[.:]/;
+// "Figure 3:", "Fig. 3.", "Table 2:", IEEE "TABLE IV" / "FIG. 2." (also alone on
+// their line). "Table 1 shows …" in body text does not match.
+export const CAPTION_START = /^(?:Figure|Fig\.|Table|FIGURE|FIG\.|TABLE)\s*(?:\d+|[IVXLC]+)(?:[.:]|\s*$)/;
 // Section numbers: "3", "3.2", "3.2.1", "IV." — not "0.30." or "12 GPUs" (those
 // are rejected by context in isHeading). Letter numbering ("A. Proofs") is
 // left out: it collides with author initials.
-const NUMBERED_HEADING = /^(?:[1-9]\d?(?:\.\d{1,2}){0,3}\.?|[IVX]+\.)\s+\p{Lu}/u;
+const NUMBERED_HEADING_PREFIX = /^\S+\s+/;
+const NUMBERED_HEADING = /^(?:[1-9]\d?(?:\.\d{1,2}){0,3}\.?|[IVX]+\.|[A-H](?:\.\d{1,2}){1,3}\.?|[A-H])\s+\p{Lu}/u;
 const ENDS_SENTENCE = /[.!?:]["'”’)\]]?$/;
 // A bracket group, optionally a range of two groups ("[3]–[5]").
 export const CITATION_PATTERN = /\s*\[([^[\]]{1,120})\](?:\s*[–-]\s*\[([^[\]]{1,120})\])?/g;
 const CITATION_ITEM = /^(?:[1-9]\d{0,3}(?:\s*[–-]\s*[1-9]\d{0,3})?|[A-Z][A-Za-z+]{1,7}\d{2,4}[a-z]?)$/;
 const REFERENCE_LABEL = /^\[\d+\](?:\s|$)/;
+const BIBLIOGRAPHY = /^(?:\d+\.?\s*)?(?:references|bibliography|works cited|literature cited)$/i;
 // Some publishers' fonts map the "Th" ligature to "+" ("+e", "+is", "+us").
 // Only the words that ligature produces are repaired, so maths ("+w") is not.
 const BROKEN_TH = new RegExp(
@@ -86,13 +90,16 @@ export function buildUnits(
   for (const s of stream) lexicon.addLine(s.text);
   const pitch = linePitch(stream, bodyFont);
   const math = mathLines(stream, bodyFont, pitch);
+  const bodyFontName = dominantFontName(stream, bodyFont);
 
   const rulesOf = new Map(pages.map((p) => [p.page, p.rules]));
   const units: ReadingUnit[] = [];
   const emit = (items: Item[], kind: UnitKind) => {
     if (kind === 'caption' && options.skipCaptions) return;
     const unit = makeUnit(units.length, items, kind, lexicon, options, (page) => rulesOf.get(page) ?? []);
-    if (unit.text) units.push(unit);
+    // A fragment without a single letter ("2", "(1)", "0.60", "!") is a stray
+    // mark, tick label or equation number; read alone it means nothing.
+    if (unit.text && /\p{L}/u.test(unit.text)) units.push(unit);
   };
 
   let current: Open | null = null;
@@ -101,6 +108,7 @@ export function buildUnits(
   let asidePrev: Placed | null = null;
   let interrupted = false;
   let afterMath = false;
+  let inBibliography = false;
   let mathGroup: Line[] = [];
   let tableGroup: Line[] = [];
   const readTables = new Set<string>();
@@ -167,8 +175,16 @@ export function buildUnits(
     }
     flushMath();
 
-    const heading = isHeading(stream, i, bodyFont, pitch);
+    // The rest of a row split at a wide space ("C   Prompts used", a run-in
+    // heading and its paragraph) goes with the start of the row.
+    if (current && prev && !aside && sameRow(prev.line, s.line)) {
+      current.items.push({ line: s.line });
+      prev = s;
+      return;
+    }
+    const heading = isHeading(stream, i, bodyFont, pitch, bodyFontName);
     const caption = CAPTION_START.test(s.text);
+    if (heading) inBibliography = BIBLIOGRAPHY.test(s.text.trim());
 
     if (aside && asidePrev) {
       const continuesAside =
@@ -188,9 +204,12 @@ export function buildUnits(
     }
 
     if (current && prev) {
+      // A heading wrapped onto a second line: in heading size, or in the
+      // heading's own (bold) font when headings are body-sized.
+      const headingFont = s.line.fontName === prev.line.fontName && s.line.fontName !== bodyFontName;
       const continuesHeading =
         current.kind === 'heading' &&
-        heading &&
+        (heading || headingFont) &&
         sameBlock(prev.line, s.line) &&
         s.line.baseline - prev.line.baseline < 1.3 * s.line.fontSize;
       let breaks: boolean;
@@ -198,6 +217,7 @@ export function buildUnits(
       else if (current.kind === 'heading' || heading) breaks = true;
       // After display maths the sentence goes on only if the text does ("where …").
       else if (afterMath) breaks = !/^[\p{Ll},;]/u.test(s.text);
+      else if (inBibliography) breaks = startsEntry(prev, s, pitch);
       else {
         const first = current.items[0];
         const inReference = 'line' in first && REFERENCE_LABEL.test(lineText(first.line));
@@ -247,6 +267,8 @@ function startsParagraph(
 ): boolean {
   const p = prev.line;
   const c = cur.line;
+  // A row split at a wide justified space, or around a subscript, goes on.
+  if (sameRow(p, c)) return false;
   if (Math.abs(c.fontSize - p.fontSize) > 0.15 * p.fontSize) return true;
   if (REFERENCE_LABEL.test(cur.text) && (inReference || ENDS_SENTENCE.test(prev.text))) return true;
   // Inside a reference entry, wrapped lines (hanging indent, URLs) belong to
@@ -270,24 +292,58 @@ function startsParagraph(
   return endsSentence && (indented || prevShort);
 }
 
-function isHeading(stream: Placed[], i: number, bodyFont: number, pitch: number): boolean {
-  const s = stream[i];
+/**
+ * In a reference list, entries start at the margin and their wrapped lines
+ * are indented (hanging indent) — in author-year styles ("Brown, T. 2020.")
+ * as well as numbered ones. Without hanging indents, an entry ends at a line
+ * that ends a sentence.
+ */
+function startsEntry(prev: Placed, cur: Placed, pitch: number): boolean {
+  if (REFERENCE_LABEL.test(cur.text)) return true;
+  const same = sameBlock(prev.line, cur.line);
+  if (same && cur.line.baseline - prev.line.baseline > 1.5 * pitch) return true;
+  const atMargin = cur.line.box.x <= cur.block.x + 0.5 * cur.line.fontSize;
+  return atMargin && ENDS_SENTENCE.test(prev.text);
+}
+
+function isHeading(stream: Placed[], i: number, bodyFont: number, pitch: number, bodyFontName: string): boolean {
+  // The whole row: the number and title can be separate lines ("C   Prompts").
+  let last = i;
+  while (stream[last + 1] && sameRow(stream[last].line, stream[last + 1].line)) last++;
+  const s = { ...stream[i], text: stream.slice(i, last + 1).map((r) => r.text).join(' ') };
   if (s.line.fontSize >= bodyFont * 1.15 && s.text.length <= 150) return true;
   if (!NUMBERED_HEADING.test(s.text) || s.text.length > 80 || /[-,;:.]$/.test(s.text)) return false;
-  if (s.text.split(/\s+/).length > 9) return false;
+  if (s.text.split(/\s+/).length > 12) return false;
+  // A run-in heading starts a paragraph on the same line ("4.1 Metrics. We …").
+  if (/[.:]\s+\S/.test(s.text.replace(NUMBERED_HEADING_PREFIX, ''))) return false;
+  // An appendix letter alone ("C Prompts used") only for short lines: "A New
+  // method …" can start a sentence.
+  if (/^[A-H]\s/.test(s.text) && s.text.split(/\s+/).length > 6) return false;
 
   const prev = stream[i - 1];
-  const next = stream[i + 1];
+  const next = stream[last + 1];
   const close = (a: Placed, b: Placed) =>
     sameBlock(a.line, b.line) && b.line.baseline - a.line.baseline > 0 && b.line.baseline - a.line.baseline <= 1.3 * pitch;
   // A wrapped line that happens to start with a number ("12 GPUs by …").
   if (prev && close(prev, s) && !ENDS_SENTENCE.test(prev.text)) return false;
   // A numbered list item whose text wraps under a hanging indent.
-  if (next && close(s, next) && next.line.box.x > s.line.box.x + 0.8 * s.line.fontSize) return false;
+  // (A heading in its own font wrapped under its number is not.)
+  const wrappedTitle = s.line.fontName !== bodyFontName && next?.line.fontName === s.line.fontName;
+  if (next && close(s, next) && next.line.box.x > s.line.box.x + 0.8 * s.line.fontSize && !wrappedTitle) return false;
   return true;
 }
 
 const sameBlock = (a: Line, b: Line) => a.page === b.page && a.block === b.block;
+const sameRow = (a: Line, b: Line) => sameBlock(a, b) && Math.abs(a.baseline - b.baseline) <= 0.5 * Math.min(a.fontSize, b.fontSize);
+
+/** The font most body-size text is set in (the regular body face). */
+function dominantFontName(stream: Placed[], bodyFont: number): string {
+  const count = new Map<string, number>();
+  for (const s of stream) {
+    if (Math.abs(s.line.fontSize - bodyFont) < 0.1 * bodyFont) count.set(s.line.fontName, (count.get(s.line.fontName) ?? 0) + s.text.length);
+  }
+  return [...count.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? '';
+}
 
 /**
  * Display-maths lines: a maths symbol with at most one ordinary word, plus
@@ -295,7 +351,7 @@ const sameBlock = (a: Line, b: Line) => a.page === b.page && a.block === b.block
  */
 function mathLines(stream: Placed[], bodyFont: number, pitch: number): boolean[] {
   const words = (t: string) => (t.match(/\p{L}{3,}/gu) ?? []).filter((w) => !MATH_WORDS.has(w.toLowerCase())).length;
-  const prose = (t: string) => /\p{L}{2,}[,;]?\s+\p{L}{2,}[,;]?\s+\p{L}{2,}/u.test(t);
+  const prose = (t: string) => /\p{L}{2,}[,;]?\s+\p{L}{2,}[,;]?\s+\p{L}{2,}/u.test(t) || (words(t) >= 4 && /\b(?:the|an?|of|to|in|is|are|we|and|for|with|on|as|by)\b/i.test(t));
   const identifiers = (t: string) => /[_(){}]/.test(t) && !prose(t) && !/[.!?]$/.test(t);
   const math = stream.map(
     (s) =>
@@ -356,6 +412,7 @@ function makeUnit(
 ): ReadingUnit {
   let seq: SpokenChar[] = [];
   let afterMath = false;
+  let lastLine: Line | null = null;
   for (const item of items) {
     if ('table' in item) {
       if (seq.length) seq.push(SPACE);
@@ -373,7 +430,7 @@ function makeUnit(
       if (afterMath) {
         if (/^\p{Lu}/u.test(chars[0]?.ch ?? '')) seq.push({ ch: '.', box: null });
         seq.push(SPACE);
-      } else if (URL_TOKEN.test(tail(seq))) {
+      } else if (URL_TOKEN.test(tail(seq)) && lastLine && sameBlock(lastLine, item.line) && item.line.baseline > lastLine.baseline + 1) {
         // URLs are broken after "/", "." or "-" with nothing inserted.
       } else {
         const join = lineJoin(seq, chars, lexicon);
@@ -382,6 +439,7 @@ function makeUnit(
       }
     }
     afterMath = false;
+    lastLine = item.line;
     seq.push(...chars);
   }
   seq = normalizeChars(seq);

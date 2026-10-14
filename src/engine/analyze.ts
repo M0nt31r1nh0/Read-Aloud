@@ -85,6 +85,17 @@ function markFootnotes(ordered: Line[], bodyFont: number, pageHeight: number) {
   }
 }
 
+const STOP_WORDS = new Set(
+  'the of and to a in is for with that on as we by are this it be from an or which our can at not its their these has have was were'.split(' '),
+);
+
+/** Prose: at least four words, mostly letters, and at least one common small word. */
+export function isProse(text: string): boolean {
+  const words = text.toLowerCase().match(/\p{L}+/gu) ?? [];
+  const letters = text.replace(/[^\p{L}]/gu, '').length;
+  return words.length >= 4 && letters >= 0.5 * text.replace(/\s/g, '').length && words.some((w) => STOP_WORDS.has(w));
+}
+
 /**
  * Text drawn inside figures (diagram labels, axis ticks, legends) and table
  * cells. Starting at a caption, walk away from it through the same column —
@@ -96,11 +107,14 @@ function markFootnotes(ordered: Line[], bodyFont: number, pageHeight: number) {
 function markFigureText(lines: Line[], blocks: Block[], bodyFont: number) {
   const text = new Map(lines.map((l) => [l, lineText(l)]));
   const bodySize = (l: Line) => Math.abs(l.fontSize - bodyFont) <= 0.1 * bodyFont;
-  // Column width from the page layout: the widest text column (or, on a
-  // single-column page, the text block). Line widths are misleading on pages
-  // with tables: full-width table rows, or many short cells.
-  const columns = blocks.filter((b) => b.kind === 'column');
-  const columnWidth = Math.max(0, ...(columns.length ? columns : blocks).map((b) => b.box.w));
+  // Column width: the width of the block holding the most prose lines (the
+  // text column). Line widths are misleading on pages with tables (full-width
+  // rows, many short cells), and so is the widest block (a table split into
+  // sub-columns can be wider than the text columns).
+  const proseCount = new Map<number, number>();
+  for (const l of lines) if (bodySize(l) && isProse(text.get(l)!)) proseCount.set(l.block ?? 0, (proseCount.get(l.block ?? 0) ?? 0) + 1);
+  const textBlock = [...proseCount.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+  const columnWidth = textBlock !== undefined ? blocks[textBlock].box.w : Math.max(0, ...blocks.map((b) => b.box.w));
   // Other cells on the same row within the same column (or full-width area).
   const hasRowmates = (l: Line, area: Rect) =>
     lines.some(
@@ -113,38 +127,88 @@ function markFigureText(lines: Line[], blocks: Block[], bodyFont: number) {
     );
   // Body text: a full column wide (a two-column page has a neighbour on the
   // same row in the other column), or most of one and alone on its row.
+  // Body text is prose: several words including common small ones. Table
+  // rows (numbers) and diagram label rows ("Vision Encoder Projector LLM")
+  // can be just as wide but are not.
+  const prose = (l: Line) => isProse(text.get(l)!);
   const bodyLike = (l: Line, area: Rect) =>
-    bodySize(l) && (l.box.w >= 0.95 * columnWidth || (l.box.w >= 0.75 * columnWidth && !hasRowmates(l, area)));
+    bodySize(l) && prose(l) && (l.box.w >= 0.95 * columnWidth || (l.box.w >= 0.75 * columnWidth && !hasRowmates(l, area)));
   // The short last line of a paragraph next to a figure: starts at the
   // column's left edge, several words, ends a sentence. Labels rarely do.
   const paragraphTail = (l: Line, area: Rect) =>
-    bodySize(l) && l.box.x <= area.x + 2 && /[.!?]$/.test(text.get(l)!) && text.get(l)!.split(/\s+/).length >= 4;
+    bodySize(l) && l.box.x <= area.x + 2 && /[.!?]$/.test(text.get(l)!) && prose(l);
+  // A bold run-in heading ("Cost Savings. Subsequently, we examine…") splits a
+  // body line in two: a short phrase ending in "." and prose after it.
+  const runInRow = (l: Line) => {
+    const row = lines
+      .filter((o) => o.page === l.page && Math.abs(o.baseline - l.baseline) < 0.3 * l.fontSize)
+      .sort((a, b) => a.box.x - b.box.x);
+    for (let k = 0; k + 1 < row.length; k++) {
+      const [head, rest] = [row[k], row[k + 1]];
+      const headText = text.get(head)!;
+      const close = rest.box.x - right(head.box) <= 2 * l.fontSize;
+      const short = /^\p{Lu}/u.test(headText) && /\.$/.test(headText) && headText.split(/\s+/).length <= 6;
+      if (close && short && isProse(text.get(rest)!) && right(rest.box) - head.box.x >= 0.9 * columnWidth) return true;
+    }
+    return false;
+  };
+  // Captions with their wrapped lines: another figure's caption ends a walk.
+  const captionLines = new Set<Line>();
+  for (const caption of lines) {
+    if (!CAPTION_START.test(text.get(caption)!)) continue;
+    let last = caption;
+    for (;;) {
+      const next = lines.find(
+        (o) =>
+          o.page === last.page &&
+          o.block === last.block &&
+          Math.abs(o.fontSize - caption.fontSize) < 0.5 &&
+          o.baseline > last.baseline + 0.5 * o.fontSize &&
+          o.baseline - last.baseline <= 1.5 * caption.fontSize,
+      );
+      if (!next || captionLines.has(next)) break;
+      captionLines.add(next);
+      last = next;
+    }
+  }
   const stops = (l: Line, area: Rect) =>
     l.role !== undefined ||
+    captionLines.has(l) ||
     bodyLike(l, area) ||
     paragraphTail(l, area) ||
+    (bodySize(l) && runInRow(l)) ||
     CAPTION_START.test(text.get(l)!) ||
     (l.fontSize >= 1.15 * bodyFont && /\s/.test(text.get(l)!));
 
   lines.forEach((caption, captionIndex) => {
     const captionText = text.get(caption)!;
     if (!CAPTION_START.test(captionText)) return;
-    const isTable = /^Tab/.test(captionText);
+    const isTable = /^tab/i.test(captionText);
     // The caption's column: its own block plus the column-sized blocks it
     // overlaps horizontally (a column can be subdivided, e.g. a table's label
     // and text columns). Wider blocks such as a page footer are left out; a
     // full-width caption still gets the full width from its own block.
-    const own = blocks[caption.block ?? 0]?.box ?? caption.box;
-    const overlapping = blocks
-      .filter((b) => b.box.x < right(caption.box) && right(b.box) > caption.box.x && b.box.w <= 1.2 * columnWidth)
-      .map((b) => b.box);
-    const area = union([own, ...overlapping]);
+    // A caption in a column (or beside a wrap figure) only searches column
+    // blocks; full-width text above and below is not part of its figure.
+    const ownBlock = blocks[caption.block ?? 0];
+    const own = ownBlock?.box ?? caption.box;
+    const overlapping = blocks.filter(
+      (b) =>
+        b.box.x < right(caption.box) &&
+        right(b.box) > caption.box.x &&
+        (ownBlock?.kind === 'column' ? b.kind === 'column' : b.box.w <= 1.2 * columnWidth),
+    );
+    const area = union([own, ...overlapping.map((b) => b.box)]);
+    // Only lines of those blocks: a wide figure block can make the area reach
+    // into the next column.
+    const searched = new Set([caption.block ?? 0, ...overlapping.map((b) => b.order)]);
 
     const walk = (below: boolean): Line[] => {
       const candidates = lines
         .filter(
           (l) =>
             l !== caption &&
+            searched.has(l.block ?? 0) &&
             centerX(l.box) >= area.x &&
             centerX(l.box) <= right(area) &&
             (below ? l.box.y >= bottom(caption.box) - 1 : bottom(l.box) <= caption.box.y + 1),
@@ -176,13 +240,20 @@ function markFigureText(lines: Line[], blocks: Block[], bodyFont: number) {
       return marked;
     };
 
+    const gapTo = (side: Line[]) =>
+      side.length ? Math.min(Math.abs(side[0].box.y - bottom(caption.box)), Math.abs(caption.box.y - bottom(side[0].box))) : Infinity;
+    // Captions on the "wrong" side: accept only content right next to the
+    // caption, and for tables only rows that have several cells.
+    const fitsOther = (other: Line[]) =>
+      gapTo(other) <= 2.5 * caption.fontSize && (!isTable || other.some((l) => hasRowmates(l, area)));
     let marked = walk(isTable);
+    const other = walk(!isTable);
     if (marked.length === 0) {
-      // Captions on the "wrong" side: accept only content right next to the
-      // caption, and for tables only rows that have several cells.
-      const other = walk(!isTable);
-      const gap = other.length ? Math.min(Math.abs(other[0].box.y - bottom(caption.box)), Math.abs(caption.box.y - bottom(other[0].box))) : Infinity;
-      if (gap <= 2.5 * caption.fontSize && (!isTable || other.some((l) => hasRowmates(l, area)))) marked = other;
+      if (fitsOther(other)) marked = other;
+    } else if (isTable && fitsOther(other) && gapTo(other) < gapTo(marked)) {
+      // A table right above its caption (ACL style puts every table caption
+      // below), with the next table further down the page.
+      marked = other;
     }
     for (const l of marked) {
       l.role = isTable ? 'table' : 'figure';

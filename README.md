@@ -86,6 +86,46 @@ The first `npm run dev` also builds the hyphenation dictionary
 
 ---
 
+## Two environments: stable and development
+
+Use the **stable** app for reading. It runs the last version that passed the
+tests, so it keeps working while bugs are being fixed in the **development**
+app.
+
+| | Stable | Development (testing) |
+| --- | --- | --- |
+| Start | `npm start` | `npm run dev` |
+| Address | **http://localhost:4173** | http://localhost:5173 |
+| Runs | the last deployed version | the source as it is being edited, reloading on every change |
+| Label in the toolbar | `Version 20261014-140655` | `Development` (orange) |
+
+Both can run at the same time. To publish what is in development to the
+stable app:
+
+```bash
+npm run deploy
+npm run deploy -- -m "Fixed table reading"   # with a note shown in the update pop-up
+```
+
+`deploy` runs the type check and all tests first. If any fail, nothing is
+deployed and the stable app stays as it was. Otherwise it builds a new
+version into `deploy/releases/<version>/` and switches the stable app to it.
+The stable server does not need a restart.
+
+When a new version is deployed, an open stable app shows a pop-up within
+30 seconds (or as soon as you switch back to it):
+
+- **Update now** reloads into the new version and reopens your PDF at the
+  same place, with the same filters, speed and voice. Press Play to continue
+  (browsers do not allow speech to start on its own after a reload).
+- **Keep this version** closes the pop-up, and you go on with the version
+  you have. The next time you open the app, it starts with the new version.
+
+The last five versions are kept, so a tab still running an older one keeps
+working. `deploy/` is not committed.
+
+---
+
 ## Using the app
 
 1. Click **Open PDF**, or drag a PDF onto the window.
@@ -185,7 +225,9 @@ Actions (`.github/workflows/ci.yml`); the results are on the repository's
 
 | Command | What it does |
 | --- | --- |
-| `npm run dev` | Development server with live reload |
+| `npm run dev` | Development server with live reload (port 5173) |
+| `npm start` | Stable app: serves the last deployed version (port 4173) |
+| `npm run deploy` | Tests, then publishes the current source to the stable app |
 | `npm test` | Runs the tests, including an end-to-end read of a generated two-column test paper |
 | `npm run typecheck` | TypeScript type check |
 | `npm run build` | Type check, then production build into `dist/` |

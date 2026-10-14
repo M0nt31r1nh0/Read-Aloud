@@ -51,6 +51,17 @@ export class Reader {
     this.restartIfPlaying();
   }
 
+  get position(): Position {
+    return { ...this.pos };
+  }
+
+  /** Go to a position without speaking (shows it highlighted). */
+  moveTo(pos: Position) {
+    this.stop();
+    this.pos = { ...pos };
+    this.announcePosition();
+  }
+
   play(from?: Position) {
     if (from) this.pos = { ...from };
     this.setState('playing');

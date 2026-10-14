@@ -151,6 +151,114 @@ describe('broken "Th" ligature', () => {
   });
 });
 
+describe('headings', () => {
+  const line = (text: string, baseline: number, x = 50, fontSize = 10, fontName = 'f') => {
+    const chars = [...text].map((_, i) => ({ x: x + i * 5, y: baseline - 8, w: 5, h: 10 }));
+    const fragment = { page: 0, text, x, top: baseline - 8, width: text.length * 5, height: 10, baseline, fontSize, fontName, chars };
+    return { page: 0, fragments: [fragment], box: { x, y: baseline - 8, w: text.length * 5, h: 10 }, baseline, fontSize, fontName, block: 0 };
+  };
+  const body = 'The body text of this paragraph goes on for a while, long enough to set the body font.';
+  const read = async (lines: ReturnType<typeof line>[]) => {
+    const { buildUnits } = await import('../src/engine/units');
+    const page = {
+      page: 0, width: 612, height: 792, dropped: [], rules: [], lines,
+      blocks: [{ page: 0, order: 0, kind: 'full' as const, box: { x: 50, y: 0, w: 500, h: 792 } }],
+    };
+    return buildUnits([page], 10, DEFAULT_OPTIONS).map((u) => [u.kind, u.text]);
+  };
+
+  it('reads an appendix heading split at a wide space as one heading', async () => {
+    const units = await read([line(body, 100), line('C', 140, 50, 11), line('Prompts used', 140, 70, 11), line(body, 160)]);
+    expect(units[1]).toEqual(['heading', 'C Prompts used']);
+  });
+
+  it('finds letter-numbered and long body-size headings', async () => {
+    const units = await read([line(body, 100), line('B.3 Effect of confirmation bias in neural caching with retraining', 130), line(body, 150)]);
+    expect(units[1]).toEqual(['heading', 'B.3 Effect of confirmation bias in neural caching with retraining']);
+  });
+
+  it('keeps a run-in heading with its paragraph', async () => {
+    const units = await read([line(body, 100), line('4.1.2 Evaluation Metrics. We follow recent related works', 130), line(body, 142)]);
+    expect(units[1][0]).toBe('paragraph');
+    expect(units[1][1]).toMatch(/^4\.1\.2 Evaluation Metrics\. We follow/);
+  });
+
+  it('joins a bold heading wrapped under its number', async () => {
+    const units = await read([
+      line(body, 100),
+      line('5.1 Neural Caching without Student', 130, 50, 10, 'bold'),
+      line('Retraining', 142, 75, 10, 'bold'),
+      line(body, 160),
+      line(body, 172),
+    ]);
+    expect(units[1]).toEqual(['heading', '5.1 Neural Caching without Student Retraining']);
+  });
+});
+
+describe('reading order', () => {
+  const line = (text: string, x: number, y: number, w: number, fontSize = 10) => {
+    const fragment = { page: 0, text, x, top: y, width: w, height: fontSize, baseline: y + 0.8 * fontSize, fontSize, fontName: 'f', chars: [] };
+    return { page: 0, fragments: [fragment], box: { x, y, w, h: fontSize }, baseline: y + 0.8 * fontSize, fontSize, fontName: 'f' };
+  };
+
+  it('finds a narrow gutter beside a wrapped figure, above full-width text', async () => {
+    const { orderLines } = await import('../src/engine/columns');
+    const left = Array.from({ length: 12 }, (_, i) => line(`left ${i}`, 108, 100 + 11 * i, 190));
+    // A plot (tiny tick labels) and its caption, 7pt right of the text.
+    const ticks = Array.from({ length: 8 }, (_, i) => line(`0.${60 - i}`, 314, 100 + 8 * i, 7, 3.2));
+    const caption = Array.from({ length: 5 }, (_, i) => line(`caption ${i}`, 305, 172 + 11 * i, 200));
+    const below = Array.from({ length: 4 }, (_, i) => line(`full ${i}`, 108, 232 + 11 * i, 397));
+    const { ordered } = orderLines([...below, ...caption, ...ticks, ...left], 0);
+    const order = ordered.map((l) => l.fragments[0].text).filter((t) => !t.startsWith('0.'));
+    expect(order).toEqual([...left, ...caption, ...below].map((l) => l.fragments[0].text));
+  });
+});
+
+describe('tables without rules', () => {
+  // One line whose words sit at the given x positions (5pt per character).
+  const line = (words: [string, number][], baseline: number) => {
+    const chars: { x: number; y: number; w: number; h: number }[] = [];
+    let text = '';
+    words.forEach(([word, x], i) => {
+      if (i) {
+        const gapStart = chars[chars.length - 1].x + 5;
+        chars.push({ x: gapStart, y: baseline - 8, w: x - gapStart, h: 10 });
+        text += ' ';
+      }
+      [...word].forEach((_, k) => chars.push({ x: x + 5 * k, y: baseline - 8, w: 5, h: 10 }));
+      text += word;
+    });
+    const x = chars[0].x;
+    const width = chars[chars.length - 1].x + 5 - x;
+    const fragment = { page: 0, text, x, top: baseline - 8, width, height: 10, baseline, fontSize: 10, fontName: 'f', chars };
+    return { page: 0, fragments: [fragment], box: { x, y: baseline - 8, w: width, h: 10 }, baseline, fontSize: 10, fontName: 'f' };
+  };
+  const read = async (lines: ReturnType<typeof line>[]) => {
+    const { tableChars } = await import('../src/engine/tables');
+    // Booktabs rules: top, under the header (\midrule), bottom.
+    const rules = [92, 105, 150].map((y) => ({ x0: 100, y0: y, x1: 380, y1: y + 0.4 }));
+    return tableChars(lines, rules).map((c) => c.ch).join('');
+  };
+
+  it('reads rows under a centred label column and a close-set header', async () => {
+    // Column names closer together than the value columns' gaps, and centred
+    // row labels of different widths.
+    const header = line([['ISEAR', 248], ['RT-Polarity', 283], ['FEVER', 348]], 100);
+    const rows = [
+      ['Random (N=500)', '0.629', '0.882', '0.679'],
+      ['Margin Sampling (N=500)', '0.656', '0.895', '0.698'],
+      ['Query by Committee (N=500)', '0.644', '0.887', '0.693'],
+    ];
+    // Each label and value is its own line, as split at wide gaps.
+    const labels = rows.map(([label], i) => line([[label, 175 - (label.length * 5) / 2]], 114 + 13 * i));
+    const values = rows.flatMap(([, ...v], i) => v.map((value, k) => line([[value, 250 + 50 * k]], 114 + 13 * i)));
+    const text = await read([header, ...labels, ...values]);
+    expect(text).toContain('ISEAR, RT-Polarity, FEVER.');
+    expect(text).toContain('Random (N=500): ISEAR, 0.629; RT-Polarity, 0.882; FEVER, 0.679.');
+    expect(text).toContain('Query by Committee (N=500): ISEAR, 0.644; RT-Polarity, 0.887; FEVER, 0.693.');
+  });
+});
+
 describe('sentences', () => {
   it('does not split after common abbreviations or initials', () => {
     const text = 'We follow Smith et al. in this. Dr. Jones agrees with J. Doe. Done.';
