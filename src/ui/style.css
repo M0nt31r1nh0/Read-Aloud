@@ -173,6 +173,11 @@ select {
   display: none;
 }
 
+.version.offline {
+  border-color: #dc2626;
+  color: #dc2626;
+}
+
 /* "A new version has been deployed": in a corner, so reading goes on. */
 .update-popup {
   position: fixed;

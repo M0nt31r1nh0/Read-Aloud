@@ -492,7 +492,13 @@ if (import.meta.env.DEV) {
   document.title += ' (development)';
 } else if (appVersion) {
   versionEl.textContent = `Version ${appVersion}`;
-  watchForUpdates(appVersion, saveCurrentSession);
+  watchForUpdates(appVersion, saveCurrentSession, (reachable) => {
+    versionEl.textContent = reachable ? `Version ${appVersion}` : `Version ${appVersion} · server stopped`;
+    versionEl.classList.toggle('offline', !reachable);
+    versionEl.title = reachable
+      ? 'New versions are offered here when they are deployed.'
+      : 'The stable server is not running, so new versions cannot be offered. Start it with: npm start';
+  });
 } else {
   versionEl.hidden = true;
 }

@@ -11,7 +11,11 @@ interface Release {
 
 const CHECK_EVERY = 30_000;
 
-export function watchForUpdates(current: string, update: () => Promise<void>) {
+/**
+ * `onReachable` reports whether the stable server answers: when it is not
+ * running, no update can be noticed, and the app says so.
+ */
+export function watchForUpdates(current: string, update: () => Promise<void>, onReachable: (reachable: boolean) => void) {
   let offered: string | null = null;
   let declined: string | null = null;
 
@@ -19,11 +23,13 @@ export function watchForUpdates(current: string, update: () => Promise<void>) {
     let release: Release;
     try {
       const res = await fetch('/version.json', { cache: 'no-store' });
-      if (!res.ok) return;
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       release = await res.json();
     } catch {
-      return; // the stable server is not running right now
+      onReachable(false); // the stable server is not running right now
+      return;
     }
+    onReachable(true);
     if (release.version === current || release.version === declined || release.version === offered) return;
     offered = release.version;
     show(release);

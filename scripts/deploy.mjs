@@ -71,5 +71,6 @@ try {
   const res = await fetch('http://127.0.0.1:4173/version.json', { signal: AbortSignal.timeout(1000) });
   if (res.ok) console.log('  The stable app at http://localhost:4173 offers the update to open tabs.');
 } catch {
-  console.log('  Start the stable app with: npm start   (then open http://localhost:4173)');
+  console.log('  The stable server is not running, so open tabs cannot be told about this version.');
+  console.log('  Start it with: npm start   (then open http://localhost:4173)');
 }
