@@ -20,7 +20,7 @@ if (!file) {
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const server = await createServer({ root, appType: 'custom', logLevel: 'error', server: { middlewareMode: true, hmr: false } });
 const engine = await server.ssrLoadModule('/src/engine/index.ts');
-const doc = await getDocument({ data: new Uint8Array(fs.readFileSync(file)), verbosity: 0 }).promise;
+const doc = await getDocument({ data: new Uint8Array(fs.readFileSync(file)), verbosity: 0, fontExtraProperties: true }).promise;
 const pages = [];
 for (let i = 1; i <= doc.numPages; i++) pages.push(await engine.extractPage(await doc.getPage(i), i - 1, undefined, OPS));
 const analysis = engine.analyzeDocument(pages, engine.DEFAULT_OPTIONS, new Set(readDictionaryWords()));

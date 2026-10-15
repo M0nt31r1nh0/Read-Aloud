@@ -8,7 +8,7 @@ import { buildFixturePdf, EXPECTED_TABLES, EXPECTED_UNITS } from '../scripts/mak
 import { readDictionaryWords } from '../scripts/dictionary-source.mjs';
 
 async function loadPages(data: Uint8Array): Promise<PageText[]> {
-  const doc = await getDocument({ data, verbosity: 0 }).promise;
+  const doc = await getDocument({ data, verbosity: 0, fontExtraProperties: true }).promise;
   const pages: PageText[] = [];
   for (let i = 1; i <= doc.numPages; i++) pages.push(await extractPage(await doc.getPage(i), i - 1, undefined, OPS));
   return pages;

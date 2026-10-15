@@ -366,6 +366,45 @@ describe('hidden text', () => {
   });
 });
 
+describe('glyph names', () => {
+  it('turn into the text they name', async () => {
+    const { glyphText } = await import('../src/engine/glyphs');
+    expect(glyphText('f_l')).toBe('fl');
+    expect(glyphText('f_f_i')).toBe('ffi');
+    expect(glyphText('f_f.alt')).toBe('ff');
+    expect(glyphText('abreve')).toBe('ă');
+    expect(glyphText('Scedilla')).toBe('Ş');
+    expect(glyphText('uni0103')).toBe('ă');
+    expect(glyphText('germandbls')).toBe('ß');
+    expect(glyphText('exclam')).toBeNull();
+    expect(glyphText('summationdisplay.1')).toBeNull();
+  });
+
+  it('correct characters the PDF maps wrongly, and nothing else', async () => {
+    // 2504.10320: the font names code 36 "f_l" and 37 "abreve", but the PDF's
+    // table maps them to "$" and "%". Codes named as punctuation stay.
+    const map: string[] = [];
+    for (let c = 32; c < 127; c++) map[c] = String.fromCharCode(c);
+    const differences: string[] = [];
+    differences[36] = 'f_l';
+    differences[37] = 'abreve';
+    differences[33] = 'exclam';
+    const font = { differences, toUnicode: { _map: map } };
+    const page = {
+      getViewport: () => ({ width: 612, height: 792, transform: [1, 0, 0, -1, 0, 792] }),
+      getTextContent: async () => ({
+        items: ['re$ective questions', 'Nicolae-C%t%lin Ristea!'].map((str, i) => ({ str, transform: [10, 0, 0, 10, 72, 700 - 12 * i], width: str.length * 5, fontName: 'f1' })),
+        styles: { f1: { fontFamily: 'serif' } },
+      }),
+      getOperatorList: async () => ({ fnArray: [], argsArray: [] }),
+      commonObjs: { has: (id: string) => id === 'f1', get: () => font },
+    };
+    const { fragments } = await extractPage(page, 0, undefined, { save: 1, restore: 2, transform: 3, constructPath: 4, stroke: 5, closeStroke: 6, fill: 7, eoFill: 8, fillStroke: 9, eoFillStroke: 10, closeFillStroke: 11, closeEOFillStroke: 12 });
+    expect(fragments.map((f) => f.text)).toEqual(['reflective questions', 'Nicolae-Cătălin Ristea!']);
+    expect(fragments[0].chars).toHaveLength('reflective questions'.length);
+  });
+});
+
 describe('broken ligatures', () => {
   it('repairs words when the repaired form is a word, and leaves punctuation alone', async () => {
     const { buildUnits } = await import('../src/engine/units');
@@ -374,7 +413,7 @@ describe('broken ligatures', () => {
       const fragment = { page: 0, text, x: 50, top: baseline - 8, width: text.length * 5, height: 10, baseline, fontSize: 10, fontName: 'f', chars };
       return { page: 0, fragments: [fragment], box: { x: 50, y: baseline - 8, w: text.length * 5, h: 10 }, baseline, fontSize: 10, fontName: 'f', block: 0 };
     };
-    const dictionary = { has: (w: string) => ['effectively', 'specific', 'first', 'efficiency', 'identifies'].includes(w) };
+    const dictionary = { has: (w: string) => ['effectively', 'specific', 'first', 'efficiency', 'identifies', 'reflective', 'artificial', 'in', 'at', 'fin', 'fiat'].includes(w) };
     const page = (lines: ReturnType<typeof line>[]) => ({
       page: 0, width: 612, height: 792, dropped: [], rules: [], lines,
       blocks: [{ page: 0, order: 0, kind: 'full' as const, box: { x: 50, y: 0, w: 500, h: 792 } }],
@@ -384,6 +423,11 @@ describe('broken ligatures', () => {
       'It works effectively in specific cases, the first time, with efficiency.',
     );
     expect(read(line('He said "wait" and left!', 100))).toBe('He said "wait" and left!');
+    expect(read(line('Words like "in and "at stay quoted.', 100))).toBe('Words like "in and "at stay quoted.');
+    // "fl" as "$"; "fi" as "!" in another font of the same paper; a name.
+    expect(read(line('re$ective questions, Arti!cial Intelligence, Ca!agni et al.', 100))).toBe(
+      'reflective questions, Artificial Intelligence, Caffagni et al.',
+    );
     // Across a line-end hyphen too: "identi-" + '"es'.
     expect(read(line('The method identi-', 100), line('"es the anomalies.', 112))).toBe('The method identifies the anomalies.');
   });

@@ -87,7 +87,8 @@ async function openDocument(data: ArrayBuffer | Uint8Array, name: string) {
   painter.disconnect();
   setStatus(`Loading ${name}…`);
   const bytes = new Uint8Array(data).slice();
-  const doc = await pdfjs.getDocument({ data: bytes.slice() }).promise;
+  // fontExtraProperties: glyph names, to correct characters a PDF maps wrongly.
+  const doc = await pdfjs.getDocument({ data: bytes.slice(), fontExtraProperties: true }).promise;
   if (token !== renderToken) return;
   openFile = { name, data: bytes };
   pagesEl.replaceChildren();

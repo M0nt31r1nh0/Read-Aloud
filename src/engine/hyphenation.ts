@@ -25,13 +25,17 @@ export class Lexicon {
 
   private continuesWord = false;
 
-  constructor(private readonly dictionary: Dictionary | null = null) {}
+  constructor(readonly dictionary: Dictionary | null = null) {}
 
   /**
    * Feed every line's text in reading order. Word halves split by a line-end
    * hyphen ("fre-" and the next line's "quently") are not counted as words.
    */
+  /** Ligature characters seen inside words: the font breaks ligatures. */
+  brokenLigatures = 0;
+
   addLine(text: string) {
+    this.brokenLigatures += (text.match(/\p{Ll}[!"#$%]\p{Ll}/gu) ?? []).length;
     const tokens = text.match(/\p{L}+(?:-\p{L}+)*-?/gu) ?? [];
     const startsWithFragment = this.continuesWord;
     this.continuesWord = /\p{L}-$/u.test(text);
@@ -84,32 +88,65 @@ export class Lexicon {
 }
 
 /** How to join `next` (a new line) onto `seq` (the text so far). */
-/** Characters some fonts give the ff, fi and ffi ligatures (see units.ts). */
-export const BROKEN_LIGATURES: Record<string, string> = { '!': 'ff', '"': 'fi', '#': 'ffi' };
-const unligature = (s: string) => s.replace(/[!"#]/g, (c) => BROKEN_LIGATURES[c]);
+/**
+ * Some fonts map the ff, fi, fl, ffi and ffl ligatures to "!", '"', "#",
+ * "$" and "%" ("e!ectively", "speci"c", "e#ciency", "re$ective"), and not
+ * always the same way ("Arti!cial"). Each such character is tried as every
+ * ligature, its usual one first, and the first spelling that is a known word
+ * wins. Anything else is left as it is: punctuation stays punctuation.
+ */
+const LIGATURES = ['ff', 'fi', 'fl', 'ffi', 'ffl'];
+const USUAL: Record<string, string> = { '!': 'ff', '"': 'fi', '#': 'ffi', $: 'fl', '%': 'ffl' };
+const BROKEN = /[!"#$%]/;
+
+export function repairLigatures(word: string, lexicon: Lexicon): string {
+  const broken = [...word].filter((c) => BROKEN.test(c)).length;
+  if (!broken || broken > 3) return word;
+  const known = (w: string) => lexicon.knows(w) || (/s$/i.test(w) && lexicon.knows(w.slice(0, -1)));
+  // At the start or end of a word the character is usually punctuation
+  // ('"in' is a quote, not "fin"; "Hi!"), unless the document shows that its
+  // font breaks ligatures ("e!ectively" again and again): then '"rst',
+  // '"eld' and "trade-o!" are "first", "field" and "trade-off".
+  const edge = BROKEN.test(word[0]) || BROKEN.test(word[word.length - 1]);
+  if (edge && lexicon.brokenLigatures < 3) return word;
+  const spell = (rest: string): string[] => {
+    const at = rest.search(BROKEN);
+    if (at < 0) return [rest];
+    const options = [USUAL[rest[at]], ...LIGATURES.filter((l) => l !== USUAL[rest[at]])];
+    return options.flatMap((l) => spell(rest.slice(at + 1)).map((tail) => rest.slice(0, at) + l + tail));
+  };
+  const found = spell(word).find(known);
+  if (found) return found;
+  // Names are not in the dictionary ("Ca!agni"): a capitalised word with
+  // the character between lower-case letters takes the usual ligature.
+  if (broken === 1 && /^\p{Lu}\p{Ll}+[!"#$%]\p{Ll}{2,}$/u.test(word)) return word.replace(BROKEN, (c) => USUAL[c]);
+  return word;
+}
 
 export function lineJoin(seq: SpokenChar[], next: SpokenChar[], lexicon: Lexicon): JoinDecision {
   const last = seq[seq.length - 1]?.ch;
   if (!last || !HYPHENS.has(last)) return 'space';
   const before = seq[seq.length - 2]?.ch ?? '';
-  if (!LETTER.test(before)) return 'space'; // a dash, not a hyphen
+  // A dash, not a hyphen; a broken ligature counts as letters ("e#-").
+  if (!LETTER.test(before) && !(BROKEN.test(before) && LETTER.test(seq[seq.length - 3]?.ch ?? ''))) return 'space';
   if (last === '­') return 'join';
 
   let i = seq.length - 2;
-  const inWord = (k: number) => LETTER.test(seq[k].ch) || (/[!"#]/.test(seq[k].ch) && k > 0 && LETTER.test(seq[k - 1].ch));
+  const inWord = (k: number) => LETTER.test(seq[k].ch) || (BROKEN.test(seq[k].ch) && k > 0 && LETTER.test(seq[k - 1].ch));
   while (i >= 0 && (inWord(i) || (seq[i].ch === '-' && i > 0 && LETTER.test(seq[i - 1].ch)))) i--;
   let left = seq
     .slice(i + 1, seq.length - 1)
     .map((c) => c.ch)
     .join('');
-  let rightPart = (next.map((c) => c.ch).join('').match(/^\p{L}+/u) ?? [''])[0];
+  const rightPart = (next.map((c) => c.ch).join('').match(/^\p{L}+/u) ?? [''])[0];
   // A broken ligature on either side ("e!ec-" + "tively", "identi-" + '"es'):
   // decide on the repaired word, if it is one.
-  const rightRaw = (next.map((c) => c.ch).join('').match(/^[\p{L}!"#]+/u) ?? [''])[0];
-  if (/[!"#]/.test(left + rightRaw) && lexicon.knows(unligature(left + rightRaw))) {
-    left = unligature(left);
-    rightPart = unligature(rightRaw);
-  } else left = left.replace(/^.*[!"#]/, '');
+  const rightRaw = (next.map((c) => c.ch).join('').match(/^[\p{L}!"#$%]+/u) ?? [''])[0];
+  if (BROKEN.test(left + rightRaw)) {
+    // One word once repaired: join it.
+    if (repairLigatures(left + rightRaw, lexicon) !== left + rightRaw) return 'join';
+    left = left.replace(/^.*[!"#$%]/, '');
+  }
 
   // "COVID-" + "19", "Type-" + "B": an upper-case or numeric start keeps it.
   if (!rightPart || !/^\p{Ll}/u.test(rightPart)) return 'keep';

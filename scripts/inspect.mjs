@@ -20,7 +20,7 @@ const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const server = await createServer({ root, appType: 'custom', logLevel: 'error', server: { middlewareMode: true, hmr: false } });
 const engine = await server.ssrLoadModule('/src/engine/index.ts');
 
-const doc = await getDocument({ data: new Uint8Array(fs.readFileSync(file)), verbosity: 0 }).promise;
+const doc = await getDocument({ data: new Uint8Array(fs.readFileSync(file)), verbosity: 0, fontExtraProperties: true }).promise;
 const first = range ? Number(range[1]) : 1;
 const last = range ? Number(range[2] ?? range[1]) : doc.numPages;
 const pages = [];

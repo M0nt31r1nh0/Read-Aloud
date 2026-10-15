@@ -1,6 +1,7 @@
 // Adapter from pdf.js text content to engine fragments with per-character
 // boxes. Typed structurally so the engine does not depend on a pdf.js build.
 
+import { glyphText } from './glyphs';
 import { approximateWidths, type CharWidths } from './measure';
 import type { Fragment, Rect, Rule } from './types';
 
@@ -24,7 +25,21 @@ export interface PdfPageLike {
   getViewport(params: { scale: number }): { width: number; height: number; transform: number[] };
   getTextContent(): Promise<{ items: unknown[]; styles: Record<string, PdfTextStyle> }>;
   getOperatorList?(): Promise<{ fnArray: number[]; argsArray: unknown[] }>;
+  /** Loaded fonts (after getOperatorList); glyph names need `fontExtraProperties`. */
+  commonObjs?: { has(id: string): boolean; get(id: string): unknown };
 }
+
+/** What a pdf.js font object tells about its glyphs. */
+interface PdfFontLike {
+  composite?: boolean;
+  /** Glyph names by character code, from the font's encoding differences. */
+  differences?: (string | undefined)[];
+  /** Code to text; on the main thread pdf.js sends it as plain data ({ _map }). */
+  toUnicode?: { get?(code: number): string | undefined; _map?: (string | undefined)[] };
+}
+
+const unicodeOf = (font: PdfFontLike, code: number) =>
+  typeof font.toUnicode?.get === 'function' ? font.toUnicode.get(code) : font.toUnicode?._map?.[code];
 
 /** The pdf.js `OPS` codes needed to read ruling lines (pass `pdfjs.OPS`). */
 export interface PdfOps {
@@ -61,6 +76,18 @@ export async function extractPage(
   const content = await pdfPage.getTextContent();
   const fragments: Fragment[] = [];
 
+  // The operator list first: it loads the fonts, whose glyph names can
+  // correct characters the text layer gets wrong.
+  const list = ops && pdfPage.getOperatorList ? await pdfPage.getOperatorList() : null;
+  const fonts = new Map<string, PdfFontLike | null>();
+  const fontOf = (name: string) => {
+    if (!fonts.has(name)) {
+      const objs = pdfPage.commonObjs;
+      fonts.set(name, objs?.has(name) ? (objs.get(name) as PdfFontLike) : null);
+    }
+    return fonts.get(name)!;
+  };
+
   for (const item of content.items) {
     if (!isTextItem(item) || item.str.trim() === '') continue;
     const style = content.styles[item.fontName] ?? { fontFamily: 'sans-serif' };
@@ -83,12 +110,13 @@ export async function extractPage(
     }
     const x = tx[4];
     const baseline = tx[5];
-    const width = item.width > 0 ? item.width : item.str.length * fontSize * 0.5;
+    const str = correctFromGlyphNames(item.str, fontOf(item.fontName));
+    const width = item.width > 0 ? item.width : str.length * fontSize * 0.5;
     const top = baseline - ascent * fontSize;
     const height = (ascent - descent) * fontSize;
     fragments.push({
       page,
-      text: item.str,
+      text: str,
       x,
       top,
       width,
@@ -96,11 +124,36 @@ export async function extractPage(
       baseline,
       fontSize,
       fontName: item.fontName,
-      chars: charBoxes(x, top, width, height, widths(item.str, style.fontFamily)),
+      chars: charBoxes(x, top, width, height, widths(str, style.fontFamily)),
     });
   }
-  const rules = ops && pdfPage.getOperatorList ? await extractRules(pdfPage, viewport.transform, ops) : [];
+  const rules = list && ops ? extractRules(list, viewport.transform, ops) : [];
   return { page, width: viewport.width, height: viewport.height, fragments, rules };
+}
+
+/**
+ * Characters the font's own glyph names contradict: the PDF's character
+ * table says "$" or "%", the glyph is named "f_l" or "abreve". Only a glyph
+ * named as a letter (or letters) replaces punctuation or a symbol, and only
+ * where the table maps the code to that same character, the sign of a table
+ * filled in blindly. Fonts without glyph names are left alone (the
+ * dictionary repair in units.ts still applies).
+ */
+function correctFromGlyphNames(str: string, font: PdfFontLike | null): string {
+  const names = font?.differences;
+  if (!names || font.composite || !font.toUnicode) return str;
+  let out = '';
+  let changed = false;
+  for (const ch of str) {
+    const code = ch.codePointAt(0)!;
+    const name = code < 256 ? names[code] : undefined;
+    const real = name ? glyphText(name) : null;
+    if (real && real !== ch && /^\p{L}+$/u.test(real) && !/[\p{L}\p{N}\s]/u.test(ch) && unicodeOf(font, code) === ch) {
+      out += real;
+      changed = true;
+    } else out += ch;
+  }
+  return changed ? out : str;
 }
 
 /**
@@ -108,8 +161,7 @@ export async function extractPage(
  * stroked segments, and thin filled rectangles (how LaTeX draws \hline).
  * Coordinates are mapped through the graphics state into page space.
  */
-async function extractRules(pdfPage: PdfPageLike, viewportTransform: number[], ops: PdfOps): Promise<Rule[]> {
-  const list = await pdfPage.getOperatorList!();
+function extractRules(list: { fnArray: number[]; argsArray: unknown[] }, viewportTransform: number[], ops: PdfOps): Rule[] {
   const strokes = new Set([ops.stroke, ops.closeStroke, ops.fillStroke, ops.eoFillStroke, ops.closeFillStroke, ops.closeEOFillStroke]);
   const fills = new Set([ops.fill, ops.eoFill]);
   const rules: Rule[] = [];

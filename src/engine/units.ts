@@ -6,7 +6,7 @@
 
 import type { Dictionary } from './dictionary';
 import { median, right } from './geometry';
-import { BROKEN_LIGATURES, Lexicon, lineJoin } from './hyphenation';
+import { Lexicon, lineJoin, repairLigatures } from './hyphenation';
 import { splitSentences } from './sentences';
 import { tableChars } from './tables';
 import { collapseSpaces, lineChars, lineText, normalizeChars, replaceAll, type SpokenChar } from './text';
@@ -38,17 +38,8 @@ const BROKEN_TH = new RegExp(
   ].join('|')})\\b)`,
   'g',
 );
-// Some fonts map the ff, fi and ffi ligatures to "!", '"' and "#"
-// ("e!ectively", "speci"c", "e#ciency"). A word is repaired only when the
-// repaired form is a known word, so punctuation stays punctuation.
-const BROKEN_LIGATURE = /[\p{L}!"#]*\p{L}[\p{L}!"#]*/gu;
-
-function repairLigatures(word: string, lexicon: Lexicon): string {
-  if (!/[!"#]/.test(word)) return word;
-  const repaired = word.replace(/[!"#]/g, (c) => BROKEN_LIGATURES[c]);
-  const known = (w: string) => lexicon.knows(w) || (/s$/i.test(w) && lexicon.knows(w.slice(0, -1)));
-  return known(repaired) ? repaired : word;
-}
+// Broken ligatures ("e!ectively", "re$ective"): see repairLigatures.
+const BROKEN_LIGATURE = /[\p{L}!"#$%]*\p{L}[\p{L}!"#$%]*/gu;
 
 const URL = /\b(?:https?:\/\/|www\.)[^\s]+/g;
 const URL_TOKEN = /(?:^|\s)(?:https?:\/\/|www\.)\S*$/;
