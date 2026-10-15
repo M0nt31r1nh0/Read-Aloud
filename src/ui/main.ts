@@ -695,16 +695,56 @@ function updatePlayButton(state: ReaderState) {
   }
 }
 
+// ---------- settings ----------
+
+// Speed, voice and filters are remembered in the browser as soon as they
+// change (like the zoom): they survive updates, with or without a PDF open,
+// and closing and reopening the app.
+const FILTER_IDS = ['opt-layout', 'opt-citations', 'opt-captions', 'opt-tables', 'opt-abbrev', 'opt-footnotes', 'opt-equations'];
+const SETTINGS_KEY = 'read-aloud:settings';
+
+interface Settings {
+  rate?: number;
+  voice?: string;
+  options?: Record<string, boolean>;
+}
+
+const savedSettings: Settings = (() => {
+  try {
+    return JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? '{}') as Settings;
+  } catch {
+    return {};
+  }
+})();
+/** The voice chosen by name: the browser's voice list can be rebuilt. */
+let chosenVoice = savedSettings.voice ?? '';
+
+function saveSettings() {
+  try {
+    localStorage.setItem(
+      SETTINGS_KEY,
+      JSON.stringify({
+        rate: Number(rateInput.value),
+        voice: chosenVoice,
+        options: Object.fromEntries(FILTER_IDS.map((id) => [id, $<HTMLInputElement>(id).checked])),
+      } satisfies Settings),
+    );
+  } catch {
+    // Settings are then not remembered; nothing else depends on it.
+  }
+}
+
 function loadVoices() {
   const voices = speechSynthesis.getVoices();
   if (!voices.length) return;
-  const previous = voiceSelect.value;
   voiceSelect.replaceChildren(
     ...voices.map((v, i) => new Option(`${v.name} (${v.lang})${v.localService ? '' : ' · online'}`, String(i))),
   );
+  // The chosen voice if it is installed, else a natural English one.
+  const chosen = voices.findIndex((v) => v.name === chosenVoice);
   const preferred =
-    voices.findIndex((v) => v.name === previous) >= 0
-      ? voices.findIndex((v) => v.name === previous)
+    chosen >= 0
+      ? chosen
       : Math.max(
           0,
           voices.findIndex((v) => /^en/i.test(v.lang) && /natural|online|premium|enhanced/i.test(v.name)),
@@ -720,13 +760,17 @@ speechSynthesis.addEventListener('voiceschanged', () => {
 });
 loadVoices();
 voiceSelect.addEventListener('change', () => {
-  reader.setVoice(speechSynthesis.getVoices()[Number(voiceSelect.value)] ?? null);
+  const voice = speechSynthesis.getVoices()[Number(voiceSelect.value)] ?? null;
+  chosenVoice = voice?.name ?? '';
+  reader.setVoice(voice);
   updateReadTime();
+  saveSettings();
 });
 rateInput.addEventListener('input', () => {
   $<HTMLOutputElement>('rate-value').textContent = `${Number(rateInput.value).toFixed(1)}×`;
   reader.setRate(Number(rateInput.value));
   updateReadTime();
+  saveSettings();
 });
 
 playBtn.addEventListener('click', () => analysis && reader.toggle());
@@ -739,6 +783,17 @@ $('prev').addEventListener('click', () => {
   followReading(false);
   reader.previous();
 });
+// The remembered settings, put back before any PDF is opened.
+for (const [id, checked] of Object.entries(savedSettings.options ?? {})) {
+  const box = document.getElementById(id);
+  if (box instanceof HTMLInputElement) box.checked = checked;
+}
+if (savedSettings.rate) {
+  rateInput.value = String(savedSettings.rate);
+  $<HTMLOutputElement>('rate-value').textContent = `${Number(rateInput.value).toFixed(1)}×`;
+  reader.setRate(Number(rateInput.value));
+}
+for (const id of FILTER_IDS) $(id).addEventListener('change', saveSettings);
 for (const id of ['opt-citations', 'opt-captions', 'opt-tables', 'opt-abbrev', 'opt-footnotes', 'opt-equations']) $(id).addEventListener('change', () => analysis && analyze());
 $('opt-layout').addEventListener('change', renderLayout);
 
@@ -812,7 +867,6 @@ function isPdf(file: File) {
 
 // ---------- environments and updates ----------
 
-const FILTER_IDS = ['opt-layout', 'opt-citations', 'opt-captions', 'opt-tables', 'opt-abbrev', 'opt-footnotes', 'opt-equations'];
 const versionEl = $<HTMLElement>('version');
 let updateWatch: UpdateWatch | null = null;
 const appVersion: string | undefined = import.meta.env.VITE_APP_VERSION;
@@ -837,15 +891,38 @@ if (import.meta.env.DEV) {
 async function saveCurrentSession() {
   if (!openFile) return;
   const voice = speechSynthesis.getVoices()[Number(voiceSelect.value)];
+  const position = reader.position;
   await saveSession({
     ...openFile,
-    position: reader.position,
+    position,
     options: Object.fromEntries(FILTER_IDS.map((id) => [id, $<HTMLInputElement>(id).checked])),
     rate: Number(rateInput.value),
     voice: voice?.name ?? '',
     scrollTop: pagesEl.scrollTop,
+    view: viewSpot() ?? undefined,
+    listScrollTop: transcriptEl.scrollTop,
+    started: reader.state !== 'idle' || position.unit > 0 || position.char > 0,
+    following: following.pages,
     savedAt: Date.now(),
   });
+}
+
+/** Where the view is: the page at its top, and how far down and right. */
+function viewSpot(): { page: number; down: number; right: number } | null {
+  const top = pagesEl.getBoundingClientRect().top;
+  const page = views.findIndex((v) => v.root.getBoundingClientRect().bottom > top + 1);
+  if (page < 0) return null;
+  const r = views[page].root.getBoundingClientRect();
+  const width = pagesEl.scrollWidth - pagesEl.clientWidth;
+  return { page, down: Math.max(0, (top - r.top) / r.height), right: width > 0 ? pagesEl.scrollLeft / width : 0 };
+}
+
+function showSpot(spot: { page: number; down: number; right: number }) {
+  const view = views[Math.min(spot.page, views.length - 1)];
+  if (!view) return;
+  const r = view.root.getBoundingClientRect();
+  pagesEl.scrollTop += r.top - pagesEl.getBoundingClientRect().top + spot.down * r.height;
+  pagesEl.scrollLeft = spot.right * (pagesEl.scrollWidth - pagesEl.clientWidth);
 }
 
 // After "Update now": reopen the PDF where it was, with the same settings.
@@ -861,6 +938,7 @@ void takeSession().then(async (session) => {
     const index = speechSynthesis.getVoices().findIndex((v) => v.name === session.voice);
     if (index < 0) return false;
     voiceSelect.value = String(index);
+    chosenVoice = session.voice;
     reader.setVoice(speechSynthesis.getVoices()[index]);
     return true;
   };
@@ -871,8 +949,17 @@ void takeSession().then(async (session) => {
     showError(err);
     return;
   }
-  pagesEl.scrollTop = session.scrollTop;
-  reader.moveTo(session.position);
+  // The reading position (only if reading had started: else the first
+  // sentence would be highlighted and the view sent to the top), with the
+  // view following it or not, as it was; then the view itself, exactly
+  // where it was, also when it had been scrolled away to look elsewhere.
+  if (session.started ?? true) reader.moveTo(session.position);
+  // After moveTo: stopping the reader switches following back on.
+  following.pages = following.transcript = session.following ?? true;
+  if (session.view) showSpot(session.view);
+  else pagesEl.scrollTop = session.scrollTop;
+  if (session.listScrollTop !== undefined) transcriptEl.scrollTop = session.listScrollTop;
+  updateBackButton();
 });
 
 function setStatus(text: string) {

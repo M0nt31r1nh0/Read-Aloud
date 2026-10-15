@@ -116,7 +116,9 @@ When a new version is deployed, an open stable app shows a pop-up within
 30 seconds (or as soon as you switch back to it):
 
 - **Update now** reloads into the new version and reopens your PDF at the
-  same place, with the same filters, speed and voice. Press Play to continue
+  same place: the same view (page, position, zoom), the same reading
+  position (also when you had scrolled away from it), and the same filters,
+  speed and voice. Press Play to continue
   (browsers do not allow speech to start on its own after a reload).
 - **Keep this version** closes the pop-up, and you go on with the version
   you have. The next time you open the app, it starts with the new version.
@@ -163,6 +165,10 @@ pasted, are dropped, and values out of range are brought into range.
 | <kbd>Space</kbd> | Play / pause |
 | <kbd>←</kbd> / <kbd>→</kbd> | Previous / next sentence |
 | <kbd>Esc</kbd> | Close the Filters menu |
+
+Speed, voice, filters and zoom are remembered in your browser as you change
+them, so they stay the same after an update and the next time you open the
+app.
 
 ### Filters
 

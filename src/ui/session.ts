@@ -9,7 +9,19 @@ export interface Session {
   options: Record<string, boolean>;
   rate: number;
   voice: string;
+  /** Pixel offset of the pages (kept for sessions saved by older versions). */
   scrollTop: number;
+  /**
+   * Where the view was, independent of zoom and window size: the page at the
+   * top of the view, how far down it (0-1), and how far right (0-1).
+   */
+  view?: { page: number; down: number; right: number };
+  /** The reading-order list's scroll offset. */
+  listScrollTop?: number;
+  /** Whether reading had started (else there is no position to show). */
+  started?: boolean;
+  /** Whether the page followed the voice, or had been scrolled away from it. */
+  following?: boolean;
   savedAt: number;
 }
 
