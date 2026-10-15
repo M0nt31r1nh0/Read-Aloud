@@ -79,11 +79,11 @@ export async function extractPage(
   // The operator list first: it loads the fonts, whose glyph names can
   // correct characters the text layer gets wrong.
   const list = ops && pdfPage.getOperatorList ? await pdfPage.getOperatorList() : null;
-  const fonts = new Map<string, PdfFontLike | null>();
-  const fontOf = (name: string) => {
+  const fonts = new Map<string, Map<string, string> | null>();
+  const fixesOf = (name: string) => {
     if (!fonts.has(name)) {
       const objs = pdfPage.commonObjs;
-      fonts.set(name, objs?.has(name) ? (objs.get(name) as PdfFontLike) : null);
+      fonts.set(name, glyphCorrections(objs?.has(name) ? (objs.get(name) as PdfFontLike) : null));
     }
     return fonts.get(name)!;
   };
@@ -110,7 +110,7 @@ export async function extractPage(
     }
     const x = tx[4];
     const baseline = tx[5];
-    const str = correctFromGlyphNames(item.str, fontOf(item.fontName));
+    const str = correctFromGlyphNames(item.str, fixesOf(item.fontName));
     const width = item.width > 0 ? item.width : str.length * fontSize * 0.5;
     const top = baseline - ascent * fontSize;
     const height = (ascent - descent) * fontSize;
@@ -133,27 +133,43 @@ export async function extractPage(
 
 /**
  * Characters the font's own glyph names contradict: the PDF's character
- * table says "$" or "%", the glyph is named "f_l" or "abreve". Only a glyph
- * named as a letter (or letters) replaces punctuation or a symbol, and only
- * where the table maps the code to that same character, the sign of a table
- * filled in blindly. Fonts without glyph names are left alone (the
- * dictionary repair in units.ts still applies).
+ * table says "$", "%" or "𝑆", the glyph is named "f_l", "abreve" or
+ * "u1D456" (𝑖). Some tables are filled in blindly (LibertineMath assigns
+ * 𝐴, 𝐵, 𝐶… to codes in order). Per font, each table entry is compared with
+ * its glyph's name:
+ *  - a glyph named as a letter (or letters) replaces punctuation or a symbol;
+ *  - a letter replaces a different letter only when the font disagrees with
+ *    its names that way several times (a broken table, not one odd glyph).
+ * Fonts without glyph names are left alone (the dictionary repair in units.ts
+ * still applies).
  */
-function correctFromGlyphNames(str: string, font: PdfFontLike | null): string {
+function glyphCorrections(font: PdfFontLike | null): Map<string, string> | null {
   const names = font?.differences;
-  if (!names || font.composite || !font.toUnicode) return str;
-  let out = '';
-  let changed = false;
-  for (const ch of str) {
-    const code = ch.codePointAt(0)!;
-    const name = code < 256 ? names[code] : undefined;
-    const real = name ? glyphText(name) : null;
-    if (real && real !== ch && /^\p{L}+$/u.test(real) && !/[\p{L}\p{N}\s]/u.test(ch) && unicodeOf(font, code) === ch) {
-      out += real;
-      changed = true;
-    } else out += ch;
+  if (!names || font.composite || !font.toUnicode) return null;
+  const byText = new Map<string, number[]>();
+  for (let code = 0; code < 256; code++) {
+    const text = unicodeOf(font, code);
+    if (text) byText.set(text, [...(byText.get(text) ?? []), code]);
   }
-  return changed ? out : str;
+  const punctuation = new Map<string, string>();
+  const letters = new Map<string, string>();
+  for (const [text, codes] of byText) {
+    if (codes.length !== 1) continue; // two glyphs, one character: no way back
+    const name = names[codes[0]];
+    const real = name ? glyphText(name) : null;
+    if (!real || real === text || !/^\p{L}+$/u.test(real)) continue;
+    if (/^\p{L}$/u.test(text)) letters.set(text, real);
+    else if (!/[\p{N}\s]/u.test(text)) punctuation.set(text, real);
+  }
+  const fixes = new Map([...punctuation, ...(letters.size >= 3 ? letters : [])]);
+  return fixes.size ? fixes : null;
+}
+
+function correctFromGlyphNames(str: string, fixes: Map<string, string> | null): string {
+  if (!fixes) return str;
+  let out = '';
+  for (const ch of str) out += fixes.get(ch) ?? ch;
+  return out;
 }
 
 /**

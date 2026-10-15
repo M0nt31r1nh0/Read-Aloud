@@ -405,6 +405,61 @@ describe('glyph names', () => {
   });
 });
 
+describe('maths letters', () => {
+  const ops = { save: 1, restore: 2, transform: 3, constructPath: 4, stroke: 5, closeStroke: 6, fill: 7, eoFill: 8, fillStroke: 9, eoFillStroke: 10, closeFillStroke: 11, closeEOFillStroke: 12 };
+  // A maths font whose table assigns 𝐴, 𝐵, 𝐶… to codes in order (2504.10320,
+  // LibertineMathMI), while its glyph names say what each glyph is.
+  const blindFont = (names: Record<number, string>) => {
+    const map: string[] = [];
+    for (let c = 0; c < 26; c++) map[22 + c] = String.fromCodePoint(0x1d434 + c);
+    const differences: string[] = [];
+    for (const [code, name] of Object.entries(names)) differences[Number(code)] = name;
+    return { differences, toUnicode: { _map: map } };
+  };
+  const pageWith = (str: string, font: object) => ({
+    getViewport: () => ({ width: 612, height: 792, transform: [1, 0, 0, -1, 0, 792] }),
+    getTextContent: async () => ({ items: [{ str, transform: [10, 0, 0, 10, 72, 700], width: 60, fontName: 'm' }], styles: { m: { fontFamily: 'serif' } } }),
+    getOperatorList: async () => ({ fnArray: [], argsArray: [] }),
+    commonObjs: { has: () => true, get: () => font },
+  });
+
+  it('are read from glyph names when the table disagrees with them throughout', async () => {
+    // Codes 40, 50, 41, 26 are 𝑆, 𝑐… by the table but 𝑖, 𝑘, 𝑁, 𝑙 by name.
+    const font = blindFont({ 40: 'u1D456', 41: 'u1D441', 26: 'u1D459', 32: 'u1D458' });
+    const str = String.fromCodePoint(0x1d434 + 18, 0x1d434 + 19, 0x1d434 + 4); // 𝑆𝑇𝐸: codes 40, 41, 26
+    const { fragments } = await extractPage(pageWith(str, font), 0, undefined, ops);
+    expect(fragments[0].text).toBe('𝑖𝑁𝑙');
+  });
+
+  it('are left alone when only one or two glyphs disagree', async () => {
+    const font = blindFont({ 40: 'u1D456', 41: 'u1D441' });
+    const str = String.fromCodePoint(0x1d434 + 18);
+    const { fragments } = await extractPage(pageWith(str, font), 0, undefined, ops);
+    expect(fragments[0].text).toBe(str);
+  });
+
+  it('are spoken as plain letters, symbols apart and subscript words whole', async () => {
+    const { buildUnits } = await import('../src/engine/units');
+    // Each part: text and glyph height (a symbol at 10, its subscript at 7).
+    const line = (parts: [string, number][], baseline: number) => {
+      const text = parts.map(([t]) => t).join('');
+      // One box per UTF-16 unit: a maths letter is two.
+      const chars = parts.flatMap(([t, h]) => Array.from({ length: t.length }, () => ({ x: 0, y: baseline - h, w: 5, h })));
+      chars.forEach((c, i) => (c.x = 50 + 5 * i));
+      const fragment = { page: 0, text, x: 50, top: baseline - 10, width: chars.length * 5, height: 10, baseline, fontSize: 10, fontName: 'f', chars };
+      return { page: 0, fragments: [fragment], box: { x: 50, y: baseline - 10, w: chars.length * 5, h: 10 }, baseline, fontSize: 10, fontName: 'f', block: 0 };
+    };
+    const page = {
+      page: 0, width: 612, height: 792, dropped: [], rules: [],
+      blocks: [{ page: 0, order: 0, kind: 'full' as const, box: { x: 50, y: 0, w: 500, h: 792 } }],
+      lines: [line([['the scores ', 10], ['𝑆', 10], ['𝑓 𝑎𝑠𝑡', 7], [' and the pattern ', 10], ['𝑁', 10], ['𝑖𝑘', 7], [' for the ', 10], ['𝑖', 10], ['-th scene.', 10]], 100)],
+    };
+    const dictionary = { has: (w: string) => ['fast', 'scores', 'pattern', 'scene'].includes(w) };
+    const [unit] = buildUnits([page], 10, DEFAULT_OPTIONS, dictionary);
+    expect(unit.text).toBe('the scores S fast and the pattern N i k for the i-th scene.');
+  });
+});
+
 describe('broken ligatures', () => {
   it('repairs words when the repaired form is a word, and leaves punctuation alone', async () => {
     const { buildUnits } = await import('../src/engine/units');
@@ -489,6 +544,29 @@ describe('captions', () => {
     expect(units[0][0]).toBe('paragraph');
     expect(units[0][1]).toContain('as evidenced in Appendix Table 5. Therefore, to verify');
     expect(units).toContainEqual(['caption', 'Table 6: Accuracy of the method on each of the datasets.']);
+  });
+});
+
+describe('tables under a caption', () => {
+  it('are found when the caption’s line boxes are taller than its line spacing', async () => {
+    const { analyzeDocument } = await import('../src/engine');
+    // 2504.10320 Table 1: line boxes taller than the line spacing (12pt
+    // boxes 10pt apart), so each caption line starts above where the one
+    // before it ends.
+    const run = (text: string, x: number, baseline: number, fontSize: number, height = fontSize) => ({
+      page: 0, text, x, top: baseline - 0.8 * height, width: text.length * 0.5 * fontSize, height, baseline, fontSize, fontName: 'f',
+      chars: [...text].map((_, i) => ({ x: x + 0.5 * fontSize * i, y: baseline - 0.8 * height, w: 0.5 * fontSize, h: height })),
+    });
+    const caption = ['Table 1: AUC scores of several state-of-the-art methods ver-', 'sus SlowFastVAD on Ped2 and Avenue datasets. The top three', 'methods are shown in red, green, and blue.'].map((t, i) => run(t, 62, 136 + 10 * i, 8.4, 12));
+    const rows = [['Method', 'Year', 'Micro', 'Macro'], ['LSHF', '2016', '91.0', '-'], ['AnomalyGAN', '2017', '93.5', '-'], ['FuturePred', '2018', '95.4', '81.7']].flatMap((cells, r) =>
+      cells.map((c, k) => run(c, 67 + 55 * k, 178 + 9.5 * r, 7.8)),
+    );
+    const body = ['metrics. Furthermore, in contrast to VLM-only methods, SlowFastVAD not', 'only achieves significantly faster inference, but also delivers improved', 'detection performance in all of the settings that we have studied here.'].map((t, i) => run(t, 62, 240 + 10.5 * i, 8.4));
+    const page = { page: 0, width: 612, height: 792, rules: [], fragments: [...caption, ...rows, ...body] };
+    const text = analyzeDocument([page]).units.map((u) => `${u.kind}: ${u.text}`);
+    expect(text[0]).toMatch(/^caption: Table 1: AUC scores/);
+    expect(text.join(' ')).not.toContain('AnomalyGAN');
+    expect(text.join(' ')).toContain('paragraph: metrics. Furthermore');
   });
 });
 

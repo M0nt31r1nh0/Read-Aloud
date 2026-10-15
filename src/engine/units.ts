@@ -38,6 +38,54 @@ const BROKEN_TH = new RegExp(
   ].join('|')})\\b)`,
   'g',
 );
+/**
+ * Maths letters side by side are separate symbols, except words written in
+ * them. A symbol and its subscript differ in size (𝑆 and "fast" in S_fast);
+ * each part that is a word stays whole ("S fast", "score i"), the rest is
+ * spelled out ("N i k" for N_ik, "P R A G" for P_RAG).
+ */
+function spaceMathLetters(seq: SpokenChar[], lexicon: Lexicon): SpokenChar[] {
+  const out: SpokenChar[] = [];
+  let i = 0;
+  while (i < seq.length) {
+    if (!seq[i].math || !/\p{L}/u.test(seq[i].ch)) {
+      out.push(seq[i++]);
+      continue;
+    }
+    // The run of maths letters; a space between two of the same size is
+    // spacing inside one symbol (S_{f ast} as some PDFs store "fast").
+    const isMath = (c?: SpokenChar) => !!c?.math && /\p{L}/u.test(c.ch);
+    const sameSize = (a: SpokenChar, b: SpokenChar) => !a.box || !b.box || Math.abs(a.box.h - b.box.h) <= 0.15 * Math.max(a.box.h, b.box.h);
+    const run: SpokenChar[] = [];
+    let j = i;
+    while (j < seq.length) {
+      if (isMath(seq[j])) run.push(seq[j++]);
+      else if (/\s/.test(seq[j].ch) && isMath(seq[j + 1]) && sameSize(seq[j - 1], seq[j + 1])) j++;
+      else break;
+    }
+    // Parts: a new part where the letter size changes.
+    const parts: SpokenChar[][] = [];
+    for (const c of run) {
+      const part = parts[parts.length - 1];
+      const prev = part?.[part.length - 1];
+      const resized = prev?.box && c.box && Math.abs(c.box.h - prev.box.h) > 0.15 * Math.max(c.box.h, prev.box.h);
+      if (!part || resized) parts.push([c]);
+      else part.push(c);
+    }
+    parts.forEach((part, k) => {
+      if (k) out.push(SPACE);
+      const word = part.map((c) => c.ch).join('');
+      const whole = word.length >= 3 && lexicon.knows(word);
+      part.forEach((c, m) => {
+        if (m && !whole) out.push(SPACE);
+        out.push(c);
+      });
+    });
+    i = j;
+  }
+  return out;
+}
+
 // Broken ligatures ("e!ectively", "re$ective"): see repairLigatures.
 const BROKEN_LIGATURE = /[\p{L}!"#$%]*\p{L}[\p{L}!"#$%]*/gu;
 
@@ -477,6 +525,7 @@ function makeUnit(
     seq.push(...chars);
   }
   seq = normalizeChars(seq);
+  seq = spaceMathLetters(seq, lexicon);
   seq = replaceAll(seq, BROKEN_TH, 'Th');
   seq = replaceAll(seq, BROKEN_LIGATURE, (m) => repairLigatures(m, lexicon));
   for (const [re, rep] of LIST_MARKERS) seq = replaceAll(seq, re, rep);

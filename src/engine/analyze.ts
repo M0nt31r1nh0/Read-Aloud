@@ -256,7 +256,9 @@ function markFigureText(lines: Line[], blocks: Block[], bodyFont: number) {
             searched.has(l.block ?? 0) &&
             centerX(l.box) >= area.x &&
             centerX(l.box) <= right(area) &&
-            (below ? l.box.y >= bottom(caption.box) - 1 : bottom(l.box) <= caption.box.y + 1),
+            // By baseline: line boxes can be taller than the line spacing, so a
+            // caption's next line can start above where its first one ends.
+            (below ? l.baseline > caption.baseline + 0.5 * caption.fontSize : l.baseline < caption.baseline - 0.5 * caption.fontSize),
         )
         .sort((a, b) => (below ? a.box.y - b.box.y : b.box.y - a.box.y));
       let edge = below ? bottom(caption.box) : caption.box.y;

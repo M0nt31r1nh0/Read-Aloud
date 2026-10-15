@@ -9,6 +9,8 @@ export interface SpokenChar {
   /** Exactly one UTF-16 code unit, so string indices and array indices agree. */
   ch: string;
   box: CharBox | null;
+  /** Came from a maths letter (𝑖, 𝑁): see spaceMathLetters in units.ts. */
+  math?: boolean;
 }
 
 export const seqText = (seq: SpokenChar[]) => seq.map((c) => c.ch).join('');
@@ -79,10 +81,15 @@ export function replaceAll(
 /** Unicode compatibility forms (ligatures, superscript digits) -> plain text. */
 export function normalizeChars(seq: SpokenChar[]): SpokenChar[] {
   const out: SpokenChar[] = [];
-  for (const c of seq) {
+  for (let i = 0; i < seq.length; i++) {
+    const c = seq[i];
     if (/[­​-‍﻿]/.test(c.ch)) continue;
-    const n = c.ch.normalize('NFKC');
-    for (const ch of n.split('')) out.push({ ch, box: c.box });
+    // A character outside the basic plane comes as two halves (maths italic
+    // 𝑖 is U+1D456): normalised together it becomes a plain "i".
+    const pair = /[\uD800-\uDBFF]/.test(c.ch) && /[\uDC00-\uDFFF]/.test(seq[i + 1]?.ch ?? '');
+    const raw = pair ? c.ch + seq[++i].ch : c.ch;
+    const math = /[\u{1D400}-\u{1D7FF}]/u.test(raw) || undefined;
+    for (const ch of raw.normalize('NFKC').split('')) out.push({ ch, box: c.box, math });
   }
   return out;
 }
