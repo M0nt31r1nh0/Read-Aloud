@@ -2,7 +2,8 @@
 // independent of the development server and of the source being edited.
 //
 //   /               index.html of the current release (always revalidated)
-//   /version.json   which release is current (the app polls it)
+//   /version.json   which release is current, and which are still kept
+//                   (the app polls it)
 //   /r/<id>/…       the files of one release; older releases stay available
 //                   so a tab still running one keeps working
 //
@@ -73,7 +74,15 @@ const server = http.createServer((req, res) => {
 
   if (pathname === '/version.json') {
     if (!release) return send(res, 404, 'No version deployed yet', { 'Cache-Control': 'no-store' });
-    return send(res, 200, JSON.stringify(release), { 'Content-Type': TYPES['.json'], 'Cache-Control': 'no-store' });
+    // Which releases are still here: a tab running one that is not can no
+    // longer load its files (to open another PDF) and must update.
+    let available = [];
+    try {
+      available = fs.readdirSync(releasesDir).filter((d) => fs.existsSync(path.join(releasesDir, d, 'index.html')));
+    } catch {
+      // No releases folder: nothing is available.
+    }
+    return send(res, 200, JSON.stringify({ ...release, available }), { 'Content-Type': TYPES['.json'], 'Cache-Control': 'no-store' });
   }
   if (pathname === '/' || pathname === '/index.html') {
     if (!release) return send(res, 503, 'No version of PDF Read Aloud has been deployed yet. Run: npm run deploy');

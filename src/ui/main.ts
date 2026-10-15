@@ -12,10 +12,11 @@ import {
   type DocumentAnalysis,
   type PageText,
 } from '../engine';
+import { SpeakingSpeed, countWords, formatDuration, wordsLeft } from '../speech/estimate';
 import { Reader, type ReaderState } from '../speech/reader';
 import { hitTest, rectsFor } from './highlight';
 import { saveSession, takeSession } from './session';
-import { watchForUpdates } from './updates';
+import { watchForUpdates, type UpdateWatch } from './updates';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -59,7 +60,14 @@ let openFile: { name: string; data: Uint8Array } | null = null;
 
 const reader = new Reader({
   onState: (state) => updatePlayButton(state),
-  onSentence: (unit, start, end) => showSentence(unit, start, end),
+  onSentence: (unit, start, end) => {
+    showSentence(unit, start, end);
+    updateReadTime();
+  },
+  onSpoken: (text, ms, rate, voice) => {
+    speakingSpeed.measure(voice, countWords(text), ms, rate);
+    updateReadTime();
+  },
   onWord: (unit, start, end) => showWord(unit, start, end),
 });
 
@@ -170,6 +178,38 @@ function createPageView(page: pdfjs.PDFPageProxy, index: number): PageView {
     }
   });
   return view;
+}
+
+// ---------- reading time ----------
+
+const readTimeEl = $<HTMLElement>('read-time');
+const speakingSpeed = new SpeakingSpeed(
+  (() => {
+    try {
+      return window.localStorage;
+    } catch {
+      return null;
+    }
+  })(),
+);
+
+/**
+ * "≈ 47 min" for the whole document before reading starts, "≈ 31 min left"
+ * from the current word once it has: the words still to read (after the
+ * filters) at the voice's measured speed times the Speed setting.
+ */
+function updateReadTime() {
+  readTimeEl.hidden = !analysis;
+  if (!analysis) return;
+  const voice = speechSynthesis.getVoices()[Number(voiceSelect.value)]?.name ?? '';
+  const rate = Number(rateInput.value) || 1;
+  const pos = reader.position;
+  const started = reader.state !== 'idle' || pos.unit > 0 || pos.char > 0;
+  const words = wordsLeft(analysis.units, started ? pos : { unit: 0, char: 0 });
+  const time = formatDuration(speakingSpeed.minutes(words, voice, rate));
+  readTimeEl.textContent = started ? `· ≈ ${time} left` : `· ≈ ${time}`;
+  const wpm = Math.round(speakingSpeed.wpm(voice) * rate);
+  readTimeEl.title = `About ${words.toLocaleString()} words at ${wpm} words a minute (${voice || 'default voice'}, ${rate.toFixed(1)}×). The speed is measured as the voice reads.`;
 }
 
 // ---------- page number and number fields ----------
@@ -397,6 +437,7 @@ function analyze() {
   };
   analysis = analyzeDocument(pageTexts, options, dictionary);
   reader.setUnits(analysis.units);
+  updateReadTime();
   // Test hook for driving the app from the browser console in development.
   if (import.meta.env.DEV) Object.assign(window, { __readAloud: { analysis, reader, views } });
   clearHighlights();
@@ -643,6 +684,7 @@ function renderLayout() {
 
 function updatePlayButton(state: ReaderState) {
   playBtn.textContent = state === 'playing' ? 'Pause' : state === 'paused' ? 'Resume' : 'Play';
+  updateReadTime();
   if (state === 'idle') {
     followReading(false);
     clearHighlights();
@@ -672,12 +714,19 @@ function loadVoices() {
   reader.setVoice(voices[preferred] ?? null);
 }
 
-speechSynthesis.addEventListener('voiceschanged', loadVoices);
+speechSynthesis.addEventListener('voiceschanged', () => {
+  loadVoices();
+  updateReadTime();
+});
 loadVoices();
-voiceSelect.addEventListener('change', () => reader.setVoice(speechSynthesis.getVoices()[Number(voiceSelect.value)] ?? null));
+voiceSelect.addEventListener('change', () => {
+  reader.setVoice(speechSynthesis.getVoices()[Number(voiceSelect.value)] ?? null);
+  updateReadTime();
+});
 rateInput.addEventListener('input', () => {
   $<HTMLOutputElement>('rate-value').textContent = `${Number(rateInput.value).toFixed(1)}×`;
   reader.setRate(Number(rateInput.value));
+  updateReadTime();
 });
 
 playBtn.addEventListener('click', () => analysis && reader.toggle());
@@ -765,6 +814,7 @@ function isPdf(file: File) {
 
 const FILTER_IDS = ['opt-layout', 'opt-citations', 'opt-captions', 'opt-tables', 'opt-abbrev', 'opt-footnotes', 'opt-equations'];
 const versionEl = $<HTMLElement>('version');
+let updateWatch: UpdateWatch | null = null;
 const appVersion: string | undefined = import.meta.env.VITE_APP_VERSION;
 if (import.meta.env.DEV) {
   // The testing environment, where fixes are made: told apart at a glance.
@@ -773,7 +823,7 @@ if (import.meta.env.DEV) {
   document.title += ' (development)';
 } else if (appVersion) {
   versionEl.textContent = `Version ${appVersion}`;
-  watchForUpdates(appVersion, saveCurrentSession, (reachable) => {
+  updateWatch = watchForUpdates(appVersion, saveCurrentSession, (reachable) => {
     versionEl.textContent = reachable ? `Version ${appVersion}` : `Version ${appVersion} · server stopped`;
     versionEl.classList.toggle('offline', !reachable);
     versionEl.title = reachable
@@ -831,7 +881,15 @@ function setStatus(text: string) {
 
 function showError(err: unknown) {
   console.error(err);
-  setStatus(`Could not open the PDF: ${err instanceof Error ? err.message : String(err)}`);
+  const message = err instanceof Error ? err.message : String(err);
+  // The PDF worker comes from this version's files: if they were removed
+  // (an old version left open while newer ones were deployed), say so.
+  if (updateWatch && /fake worker|dynamically imported module|Failed to fetch/i.test(message)) {
+    setStatus('This version of the app is no longer available, so it cannot open PDFs. Use "Update now" to keep reading (your place is kept).');
+    void updateWatch.check();
+    return;
+  }
+  setStatus(`Could not open the PDF: ${message}`);
 }
 
 function escapeHtml(s: string) {

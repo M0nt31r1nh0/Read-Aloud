@@ -12,7 +12,10 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const deployDir = path.join(root, 'deploy');
 const releasesDir = path.join(deployDir, 'releases');
+// Releases kept for tabs still running them: the newest few, and every one
+// from the last week (a tab can stay open for days while fixes go out).
 const KEEP = 5;
+const KEEP_DAYS = 7;
 
 const messageArg = process.argv.findIndex((a) => a === '-m' || a === '--message');
 const notes = messageArg > 0 ? process.argv[messageArg + 1] ?? '' : '';
@@ -57,13 +60,23 @@ const pointer = path.join(deployDir, 'current.json');
 fs.writeFileSync(`${pointer}.tmp`, JSON.stringify(release, null, 2));
 fs.renameSync(`${pointer}.tmp`, pointer);
 
-// Older releases stay for tabs still running them; only the oldest go.
+// Older releases stay for tabs still running them; only old ones go. A tab
+// whose release is gone is told so by the stable app (see serve.mjs).
+const deployedAt = (dir) => {
+  try {
+    return Date.parse(JSON.parse(fs.readFileSync(path.join(releasesDir, dir, 'release.json'), 'utf8')).deployedAt);
+  } catch {
+    return fs.statSync(path.join(releasesDir, dir)).mtimeMs;
+  }
+};
+const weekAgo = Date.now() - KEEP_DAYS * 24 * 60 * 60 * 1000;
 const old = fs
   .readdirSync(releasesDir)
   .filter((d) => d !== version && fs.statSync(path.join(releasesDir, d)).isDirectory())
   .sort()
   .reverse()
-  .slice(KEEP - 1);
+  .slice(KEEP - 1)
+  .filter((d) => !(deployedAt(d) > weekAgo));
 for (const dir of old) fs.rmSync(path.join(releasesDir, dir), { recursive: true, force: true });
 
 console.log(`\n✓ Deployed version ${version}${release.commit ? ` (${release.commit})` : ''}.`);

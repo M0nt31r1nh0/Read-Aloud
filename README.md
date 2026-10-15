@@ -121,8 +121,13 @@ When a new version is deployed, an open stable app shows a pop-up within
 - **Keep this version** closes the pop-up, and you go on with the version
   you have. The next time you open the app, it starts with the new version.
 
-The last five versions are kept, so a tab still running an older one keeps
-working. `deploy/` is not committed.
+Each check offers the newest version: a pop-up still on screen is replaced,
+never stacked. Versions from the last 7 days (and always the last five) are
+kept, so a tab still running an older one keeps working. If a tab's version
+has been removed, its pop-up says so and offers only **Update now** (your PDF
+and position are still kept). Restart `npm start` after updating the project
+so the stable server can tell tabs which versions it still has. `deploy/` is
+not committed.
 
 ---
 
@@ -148,6 +153,7 @@ working. `deploy/` is not committed.
 | **Speed** | Reading speed, 0.5× to 2× |
 | **Voice** | Any voice installed on your computer |
 | **Page [ 3 ] / 14** | The page you are looking at. Type a page number and press <kbd>Enter</kbd> to go there; <kbd>↑</kbd> / <kbd>↓</kbd> in the field step one page |
+| **≈ 47 min** / **≈ 31 min left** | Estimated reading time at the selected speed: for the whole document, then from the word being read. It counts only what will be read (the filters apply) and measures your voice's speed as it reads, remembering it per voice |
 | **− [ 100 ] % + Fit** | Zoom out / in, or type a zoom (25–400) and press <kbd>Enter</kbd>; **Fit** fits the page to the window width. The zoom is remembered |
 | <kbd>Ctrl</kbd> (<kbd>⌘</kbd> on a Mac) + <kbd>+</kbd> / <kbd>−</kbd> / <kbd>0</kbd> | Zoom in / out / fit to width |
 | Pinch, or <kbd>Ctrl</kbd> + scroll | Zoom around the pointer |

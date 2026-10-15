@@ -18,6 +18,8 @@ export interface ReaderCallbacks {
   onState(state: ReaderState): void;
   onSentence(unit: number, start: number, end: number): void;
   onWord(unit: number, start: number, end: number): void;
+  /** A sentence was spoken to its end: for measuring the voice's speed. */
+  onSpoken?(text: string, ms: number, rate: number, voice: string): void;
 }
 
 const WORD = /[\p{L}\p{N}'’-]+/uy;
@@ -160,8 +162,10 @@ export class Reader {
       this.pos = { unit: unitIndex, char: a };
       this.cb.onWord(unitIndex, a, b);
     };
+    const startedAt = performance.now();
     utterance.onend = () => {
       if (generation !== this.generation) return;
+      this.cb.onSpoken?.(utterance.text, performance.now() - startedAt, utterance.rate, this.voice?.name ?? '');
       this.pos = { unit: unitIndex, char: end };
       this.speakCurrent();
     };
