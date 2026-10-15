@@ -106,6 +106,7 @@ async function openDocument(data: ArrayBuffer | Uint8Array, name: string) {
     setStatus(`Analysing page ${i} of ${doc.numPages}…`);
   }
   updateZoomLabel();
+  updatePageIndicator();
   await dictionaryReady;
   if (token !== renderToken) return;
   analyze();
@@ -170,6 +171,88 @@ function createPageView(page: pdfjs.PDFPageProxy, index: number): PageView {
   return view;
 }
 
+// ---------- page number and number fields ----------
+
+const pageInput = $<HTMLInputElement>('page-input');
+const pageCount = $<HTMLElement>('page-count');
+
+/**
+ * A field that takes whole numbers only: anything else typed or pasted is
+ * dropped as it comes in. Enter (or leaving the field) applies the number;
+ * Escape, or an empty field, puts back the current value.
+ */
+function numberField(input: HTMLInputElement, apply: (value: number) => void, current: () => string) {
+  // Digits first, then the length: a length limit on the field itself would
+  // cut "1x5a0" to "1x5" before the letters are dropped.
+  const maxDigits = Number(input.dataset.maxDigits) || 4;
+  input.addEventListener('input', () => {
+    const digits = input.value.replace(/\D/g, '').slice(0, maxDigits);
+    if (digits !== input.value) input.value = digits;
+  });
+  const commit = () => {
+    if (input.value === '') input.value = current();
+    else apply(Number(input.value));
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      commit();
+      input.select();
+    } else if (e.key === 'Escape') {
+      input.value = current();
+      input.blur();
+    }
+  });
+  input.addEventListener('change', commit);
+  // Leaving the field shows the value in use (clamped, or set by a button).
+  input.addEventListener('blur', () => (input.value = current()));
+  input.addEventListener('focus', () => input.select());
+}
+
+/** The page in the middle of the view (the last one once scrolled to the end). */
+function visiblePage(): number {
+  const view = pagesEl.getBoundingClientRect();
+  if (pagesEl.scrollTop + pagesEl.clientHeight >= pagesEl.scrollHeight - 2) return views.length - 1;
+  const line = view.top + 0.4 * view.height;
+  const index = views.findIndex((v) => v.root.getBoundingClientRect().bottom > line);
+  return index < 0 ? views.length - 1 : index;
+}
+
+function updatePageIndicator() {
+  pageInput.disabled = views.length === 0;
+  pageCount.textContent = `/ ${views.length || '–'}`;
+  if (document.activeElement !== pageInput) pageInput.value = views.length ? String(visiblePage() + 1) : '';
+}
+
+/** Show page `number` (1-based, clamped). While reading, this is exploring. */
+function goToPage(number: number) {
+  if (!views.length) return;
+  const index = Math.min(views.length, Math.max(1, number)) - 1;
+  letGo('pages');
+  const target = views[index].root.getBoundingClientRect();
+  pagesEl.scrollTop += target.top - pagesEl.getBoundingClientRect().top - 8;
+  pageInput.value = String(index + 1);
+  updateBackButton();
+}
+
+numberField(pageInput, goToPage, () => String(visiblePage() + 1));
+pageInput.addEventListener('keydown', (e) => {
+  // ↑ / ↓ step a page, as in a number field.
+  if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+  e.preventDefault();
+  goToPage(visiblePage() + 1 + (e.key === 'ArrowUp' ? 1 : -1));
+  pageInput.select();
+});
+let pageQueued = false;
+pagesEl.addEventListener('scroll', () => {
+  if (pageQueued) return;
+  pageQueued = true;
+  requestAnimationFrame(() => {
+    pageQueued = false;
+    updatePageIndicator();
+  });
+});
+
 // ---------- zoom ----------
 
 /** 100% is the paper's real size: 96 CSS pixels per inch, 72 PDF points. */
@@ -178,7 +261,8 @@ const ZOOM_STEPS = [50, 67, 75, 90, 100, 110, 125, 150, 175, 200, 250, 300, 400]
 const MIN_ZOOM = 25;
 const MAX_ZOOM = 400;
 const MAX_CANVAS_PIXELS = 16_000_000;
-const zoomLabel = $<HTMLButtonElement>('zoom-level');
+const zoomInput = $<HTMLInputElement>('zoom-input');
+const zoomFit = $<HTMLButtonElement>('zoom-fit');
 
 /** "fit": the page fills the width of the view; otherwise a percentage. */
 let zoom: number | 'fit' = loadZoom();
@@ -206,9 +290,9 @@ function currentPercent() {
 }
 
 function updateZoomLabel() {
-  zoomLabel.textContent = `${Math.round(currentPercent())}%`;
-  zoomLabel.setAttribute('aria-pressed', String(zoom === 'fit'));
-  zoomLabel.title = zoom === 'fit' ? 'Fitted to the width of the window' : 'Fit to width (Ctrl+0)';
+  // Not while it is being typed in.
+  if (document.activeElement !== zoomInput) zoomInput.value = String(Math.round(currentPercent()));
+  zoomFit.setAttribute('aria-pressed', String(zoom === 'fit'));
 }
 
 /**
@@ -240,6 +324,7 @@ function setZoom(next: number | 'fit', anchor?: { x: number; y: number }) {
   for (const view of views) view.setScale(scaleFor(view));
   redrawHighlights();
   renderLayout();
+  updatePageIndicator();
   if (fixed) {
     const r = fixed.view.root.getBoundingClientRect();
     pagesEl.scrollTop += r.top + fixed.y * fixed.view.scale - at.y;
@@ -267,7 +352,14 @@ function scheduleRepaint() {
 
 $('zoom-in').addEventListener('click', () => zoomStep(1));
 $('zoom-out').addEventListener('click', () => zoomStep(-1));
-zoomLabel.addEventListener('click', () => setZoom('fit'));
+zoomFit.addEventListener('click', () => {
+  setZoom('fit');
+  zoomInput.value = String(Math.round(currentPercent()));
+});
+numberField(zoomInput, (percent) => {
+  setZoom(percent);
+  zoomInput.value = String(Math.round(currentPercent()));
+}, () => String(Math.round(currentPercent())));
 // Pinch on a trackpad (and Ctrl+wheel) zooms the document, not the window.
 pagesEl.addEventListener(
   'wheel',

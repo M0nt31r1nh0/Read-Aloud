@@ -147,9 +147,13 @@ working. `deploy/` is not committed.
 | **Stop** | Stop reading and clear the highlights |
 | **Speed** | Reading speed, 0.5× to 2× |
 | **Voice** | Any voice installed on your computer |
-| **− / 100% / +** | Zoom out / in; click the percentage to fit the page to the window width. The zoom is remembered |
+| **Page [ 3 ] / 14** | The page you are looking at. Type a page number and press <kbd>Enter</kbd> to go there; <kbd>↑</kbd> / <kbd>↓</kbd> in the field step one page |
+| **− [ 100 ] % + Fit** | Zoom out / in, or type a zoom (25–400) and press <kbd>Enter</kbd>; **Fit** fits the page to the window width. The zoom is remembered |
 | <kbd>Ctrl</kbd> (<kbd>⌘</kbd> on a Mac) + <kbd>+</kbd> / <kbd>−</kbd> / <kbd>0</kbd> | Zoom in / out / fit to width |
 | Pinch, or <kbd>Ctrl</kbd> + scroll | Zoom around the pointer |
+
+The page and zoom fields take numbers only: other characters, typed or
+pasted, are dropped, and values out of range are brought into range.
 | <kbd>Space</kbd> | Play / pause |
 | <kbd>←</kbd> / <kbd>→</kbd> | Previous / next sentence |
 | <kbd>Esc</kbd> | Close the Filters menu |

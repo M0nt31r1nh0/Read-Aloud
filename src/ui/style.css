@@ -141,13 +141,40 @@ select {
   gap: 4px;
 }
 
-#zoom-level {
-  min-width: 58px;
-  font-variant-numeric: tabular-nums;
+.page-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
-#zoom-level[aria-pressed='true'] {
+.number-field {
+  width: 3.6em;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 4px;
+}
+
+.number-field:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.number-field:disabled {
+  opacity: 0.5;
+}
+
+.unit {
+  color: var(--muted);
+}
+
+#zoom-fit[aria-pressed='true'] {
   border-color: var(--accent);
+  color: var(--accent);
 }
 
 /* Which environment this is: the deployed version, or "Development" for the
