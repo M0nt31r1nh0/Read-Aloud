@@ -2,6 +2,7 @@ import { orderLines } from './columns';
 import type { Dictionary } from './dictionary';
 import type { PageText } from './extract';
 import { bottom, centerX, right, union } from './geometry';
+import { dropHiddenText } from './hidden';
 import { buildLines } from './lines';
 import { findMarginLines } from './margins';
 import { CAPTION_START, buildUnits, isCaptionLine } from './units';
@@ -23,7 +24,7 @@ export function analyzeDocument(
   options: AnalyzeOptions = DEFAULT_OPTIONS,
   dictionary: Dictionary | null = null,
 ): DocumentAnalysis {
-  const lined = pages.map((p) => ({ ...p, lines: buildLines(p.fragments) }));
+  const lined = pages.map((p) => ({ ...p, lines: buildLines(dropHiddenText(p.fragments)) }));
   const dropped = findMarginLines(lined);
   const bodyFontSize = dominantFontSize(lined.flatMap((p) => p.lines));
 

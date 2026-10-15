@@ -44,6 +44,12 @@ export class Lexicon {
   }
 
   /** `midSentence`: the left part does not start a sentence. */
+  /** A word this document uses, or one in the dictionary. */
+  knows(word: string): boolean {
+    const key = word.toLowerCase();
+    return (this.words.get(key) ?? 0) > 0 || (this.dictionary?.has(key) ?? false);
+  }
+
   decide(left: string, rightPart: string, midSentence = true): 'join' | 'keep' {
     const joined = (left + rightPart).toLowerCase();
     const hyphenated = `${left}-${rightPart}`.toLowerCase();
@@ -78,6 +84,10 @@ export class Lexicon {
 }
 
 /** How to join `next` (a new line) onto `seq` (the text so far). */
+/** Characters some fonts give the ff, fi and ffi ligatures (see units.ts). */
+export const BROKEN_LIGATURES: Record<string, string> = { '!': 'ff', '"': 'fi', '#': 'ffi' };
+const unligature = (s: string) => s.replace(/[!"#]/g, (c) => BROKEN_LIGATURES[c]);
+
 export function lineJoin(seq: SpokenChar[], next: SpokenChar[], lexicon: Lexicon): JoinDecision {
   const last = seq[seq.length - 1]?.ch;
   if (!last || !HYPHENS.has(last)) return 'space';
@@ -86,12 +96,20 @@ export function lineJoin(seq: SpokenChar[], next: SpokenChar[], lexicon: Lexicon
   if (last === '­') return 'join';
 
   let i = seq.length - 2;
-  while (i >= 0 && (LETTER.test(seq[i].ch) || (seq[i].ch === '-' && i > 0 && LETTER.test(seq[i - 1].ch)))) i--;
-  const left = seq
+  const inWord = (k: number) => LETTER.test(seq[k].ch) || (/[!"#]/.test(seq[k].ch) && k > 0 && LETTER.test(seq[k - 1].ch));
+  while (i >= 0 && (inWord(i) || (seq[i].ch === '-' && i > 0 && LETTER.test(seq[i - 1].ch)))) i--;
+  let left = seq
     .slice(i + 1, seq.length - 1)
     .map((c) => c.ch)
     .join('');
-  const rightPart = (next.map((c) => c.ch).join('').match(/^\p{L}+/u) ?? [''])[0];
+  let rightPart = (next.map((c) => c.ch).join('').match(/^\p{L}+/u) ?? [''])[0];
+  // A broken ligature on either side ("e!ec-" + "tively", "identi-" + '"es'):
+  // decide on the repaired word, if it is one.
+  const rightRaw = (next.map((c) => c.ch).join('').match(/^[\p{L}!"#]+/u) ?? [''])[0];
+  if (/[!"#]/.test(left + rightRaw) && lexicon.knows(unligature(left + rightRaw))) {
+    left = unligature(left);
+    rightPart = unligature(rightRaw);
+  } else left = left.replace(/^.*[!"#]/, '');
 
   // "COVID-" + "19", "Type-" + "B": an upper-case or numeric start keeps it.
   if (!rightPart || !/^\p{Ll}/u.test(rightPart)) return 'keep';

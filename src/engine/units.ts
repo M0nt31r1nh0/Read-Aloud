@@ -6,7 +6,7 @@
 
 import type { Dictionary } from './dictionary';
 import { median, right } from './geometry';
-import { Lexicon, lineJoin } from './hyphenation';
+import { BROKEN_LIGATURES, Lexicon, lineJoin } from './hyphenation';
 import { splitSentences } from './sentences';
 import { tableChars } from './tables';
 import { collapseSpaces, lineChars, lineText, normalizeChars, replaceAll, type SpokenChar } from './text';
@@ -38,6 +38,18 @@ const BROKEN_TH = new RegExp(
   ].join('|')})\\b)`,
   'g',
 );
+// Some fonts map the ff, fi and ffi ligatures to "!", '"' and "#"
+// ("e!ectively", "speci"c", "e#ciency"). A word is repaired only when the
+// repaired form is a known word, so punctuation stays punctuation.
+const BROKEN_LIGATURE = /[\p{L}!"#]*\p{L}[\p{L}!"#]*/gu;
+
+function repairLigatures(word: string, lexicon: Lexicon): string {
+  if (!/[!"#]/.test(word)) return word;
+  const repaired = word.replace(/[!"#]/g, (c) => BROKEN_LIGATURES[c]);
+  const known = (w: string) => lexicon.knows(w) || (/s$/i.test(w) && lexicon.knows(w.slice(0, -1)));
+  return known(repaired) ? repaired : word;
+}
+
 const URL = /\b(?:https?:\/\/|www\.)[^\s]+/g;
 const URL_TOKEN = /(?:^|\s)(?:https?:\/\/|www\.)\S*$/;
 
@@ -95,9 +107,21 @@ export function buildUnits(
   options: AnalyzeOptions,
   dictionary: Dictionary | null = null,
 ): ReadingUnit[] {
-  const stream: Placed[] = pages.flatMap((p) =>
-    p.lines.map((line) => ({ line, text: lineText(line), block: p.blocks[line.block ?? 0].box })),
-  );
+  const stream: Placed[] = pages.flatMap((p) => {
+    // A block's margins are where its wide (text) lines start and end:
+    // figure labels in the same block can reach further out, and would make
+    // every text line look indented, or short like a paragraph's last line.
+    const blocks = p.blocks.map((b) => {
+      const wide = p.lines.filter((l) => l.block === b.order && l.box.w >= 0.5 * b.box.w);
+      if (!wide.length) return b.box;
+      // Reference labels ("[LLL 21]") set apart left of their entries are
+      // part of the text margin.
+      const labels = p.lines.filter((l) => l.block === b.order && /^\[[^\]\s][^\]]{0,15}\]/.test(lineText(l)));
+      const x = Math.min(...wide.map((l) => l.box.x), ...labels.map((l) => l.box.x));
+      return { ...b.box, x, w: Math.max(...wide.map((l) => right(l.box))) - x };
+    });
+    return p.lines.map((line) => ({ line, text: lineText(line), block: blocks[line.block ?? 0] }));
+  });
   const lexicon = new Lexicon(dictionary);
   for (const s of stream) lexicon.addLine(s.text);
   const pitch = linePitch(stream, bodyFont);
@@ -442,7 +466,14 @@ function makeUnit(
       if (afterMath) {
         if (/^\p{Lu}/u.test(chars[0]?.ch ?? '')) seq.push({ ch: '.', box: null });
         seq.push(SPACE);
-      } else if (URL_TOKEN.test(tail(seq)) && lastLine && sameBlock(lastLine, item.line) && item.line.baseline > lastLine.baseline + 1) {
+      } else if (
+        URL_TOKEN.test(tail(seq)) &&
+        lastLine &&
+        sameBlock(lastLine, item.line) &&
+        item.line.baseline > lastLine.baseline + 1 &&
+        // The rest of an address, not a sentence going on ("Answer: [Yes]").
+        !/^\p{Lu}\p{Ll}+[:,]?(?:\s|$)/u.test(chars.map((c) => c.ch).join(''))
+      ) {
         // URLs are broken after "/", "." or "-" with nothing inserted.
       } else {
         const join = lineJoin(seq, chars, lexicon);
@@ -456,6 +487,7 @@ function makeUnit(
   }
   seq = normalizeChars(seq);
   seq = replaceAll(seq, BROKEN_TH, 'Th');
+  seq = replaceAll(seq, BROKEN_LIGATURE, (m) => repairLigatures(m, lexicon));
   for (const [re, rep] of LIST_MARKERS) seq = replaceAll(seq, re, rep);
   // A reference list entry: "[12] Author…" is read "12. Author…".
   seq = replaceAll(seq, /^\[(\d+)\]\s*/g, (m) => `${m.match(/\d+/)![0]}. `);

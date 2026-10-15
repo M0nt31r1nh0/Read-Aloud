@@ -332,6 +332,63 @@ describe('page layout edge cases', () => {
   });
 });
 
+describe('hidden text', () => {
+  const run = (text: string, x: number, baseline: number, fontSize: number, fontName = 'body') => ({
+    page: 0, text, x, top: baseline - 0.8 * fontSize, width: text.length * 0.5 * fontSize, height: fontSize, baseline, fontSize, fontName,
+    chars: [...text].map((_, i) => ({ x: x + 0.5 * fontSize * i, y: baseline - 0.8 * fontSize, w: 0.5 * fontSize, h: fontSize })),
+  });
+  const body = Array.from({ length: 12 }, (_, i) => run('Recently, vision-language models have achieved remarkable progress', 62, 300 + 10.5 * i, 8.4));
+
+  it('drops a shifted copy of a figure lying on the body text, and keeps the figure', async () => {
+    const { dropHiddenText } = await import('../src/engine/hidden');
+    // 2504.10320 Figure 1: its labels again, shifted onto the column below.
+    const labels = ['A pedestrian is observed', 'action that deviates from', 'p r e v i o u s l y', 'p e d e s t r i a n', 'Interpretable Reasoning', 'Normal&Abnomral'];
+    const figure = labels.map((t, i) => run(t, 139, 140 + 6 * i, 4.5, 'fig'));
+    const copy = labels.map((t, i) => run(t, 139 + 10, 140 + 6 * i + 160, 4.5, 'fig'));
+    const kept = dropHiddenText([...body, ...figure, ...copy]);
+    expect(kept).toEqual([...body, ...figure]);
+  });
+
+  it('keeps repeated subplot labels that lie on nothing', async () => {
+    const { dropHiddenText } = await import('../src/engine/hidden');
+    const labels = ['Accuracy (%)', 'Budget', '0.70', '0.75', '0.80', 'IMDB'];
+    const plots = [0, 120, 240, 360].flatMap((dx) => labels.map((t, i) => run(t, 60 + dx, 80 + 8 * i, 5, 'fig')));
+    expect(dropHiddenText([...body, ...plots])).toHaveLength(body.length + plots.length);
+  });
+
+  it('drops a long small run squeezed between two body lines, not a smaller URL on a line', async () => {
+    const { dropHiddenText } = await import('../src/engine/hidden');
+    const above = run('In all cases, the recall of anomalies in coarse-grained', 318, 219, 10);
+    const below = run('filtering remains above 95%.', 318, 231, 10);
+    const squeezed = run('prompt-switching threshold a的时候，选择red circle', 320, 223, 6.1, 'cjk');
+    const url = run('https://youtube.com/watch', 418, 231, 7, 'tt');
+    expect(dropHiddenText([above, below, squeezed, url])).toEqual([above, below, url]);
+  });
+});
+
+describe('broken ligatures', () => {
+  it('repairs words when the repaired form is a word, and leaves punctuation alone', async () => {
+    const { buildUnits } = await import('../src/engine/units');
+    const line = (text: string, baseline: number) => {
+      const chars = [...text].map((_, i) => ({ x: 50 + i * 5, y: baseline - 8, w: 5, h: 10 }));
+      const fragment = { page: 0, text, x: 50, top: baseline - 8, width: text.length * 5, height: 10, baseline, fontSize: 10, fontName: 'f', chars };
+      return { page: 0, fragments: [fragment], box: { x: 50, y: baseline - 8, w: text.length * 5, h: 10 }, baseline, fontSize: 10, fontName: 'f', block: 0 };
+    };
+    const dictionary = { has: (w: string) => ['effectively', 'specific', 'first', 'efficiency', 'identifies'].includes(w) };
+    const page = (lines: ReturnType<typeof line>[]) => ({
+      page: 0, width: 612, height: 792, dropped: [], rules: [], lines,
+      blocks: [{ page: 0, order: 0, kind: 'full' as const, box: { x: 50, y: 0, w: 500, h: 792 } }],
+    });
+    const read = (...lines: ReturnType<typeof line>[]) => buildUnits([page(lines)], 10, DEFAULT_OPTIONS, dictionary)[0].text;
+    expect(read(line('It works e!ectively in speci"c cases, the "rst time, with e#ciency.', 100))).toBe(
+      'It works effectively in specific cases, the first time, with efficiency.',
+    );
+    expect(read(line('He said "wait" and left!', 100))).toBe('He said "wait" and left!');
+    // Across a line-end hyphen too: "identi-" + '"es'.
+    expect(read(line('The method identi-', 100), line('"es the anomalies.', 112))).toBe('The method identifies the anomalies.');
+  });
+});
+
 describe('footnotes', () => {
   const fragment = (text: string, x: number, y: number, fontSize = 10) => ({
     page: 0, text, x, top: y, width: text.length * 0.5 * fontSize, height: fontSize, baseline: y + 0.8 * fontSize, fontSize, fontName: 'f',
