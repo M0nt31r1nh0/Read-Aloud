@@ -822,7 +822,6 @@ void takeSession().then(async (session) => {
   }
   pagesEl.scrollTop = session.scrollTop;
   reader.moveTo(session.position);
-  setStatus(`Updated to version ${appVersion ?? 'new'}. ${session.name} is open where you left it: press Play to continue.`);
 });
 
 function setStatus(text: string) {
