@@ -25,6 +25,8 @@ const pagesEl = $<HTMLElement>('pages');
 const transcriptEl = $<HTMLElement>('transcript');
 const statusEl = $<HTMLElement>('status');
 const docTitleEl = $<HTMLElement>('doc-title');
+/** Pages in the open PDF while the status shows it (0: another message is shown). */
+let readyPages = 0;
 const playBtn = $<HTMLButtonElement>('play');
 const voiceSelect = $<HTMLSelectElement>('voice');
 const rateInput = $<HTMLInputElement>('rate');
@@ -122,7 +124,7 @@ async function openDocument(data: ArrayBuffer | Uint8Array, name: string) {
   await dictionaryReady;
   if (token !== renderToken) return;
   analyze();
-  setStatus(`${analysis!.units.length} reading units · ${doc.numPages} page${doc.numPages === 1 ? '' : 's'} · click any word to start there`);
+  showReadyStatus(doc.numPages);
 }
 
 function createPageView(page: pdfjs.PDFPageProxy, index: number): PageView {
@@ -705,6 +707,7 @@ function renderLayout() {
 // ---------- controls ----------
 
 function updatePlayButton(state: ReaderState) {
+  if (readyPages) showReadyStatus(readyPages);
   playBtn.dataset.state = state;
   const label = state === 'playing' ? 'Pause' : state === 'paused' ? 'Resume' : 'Play';
   playBtn.setAttribute('aria-label', label);
@@ -1019,7 +1022,17 @@ void takeSession().then(async (session) => {
   updateBackButton();
 });
 
+/**
+ * "20 pages · click any word to start there": the hint only while not
+ * reading. (The number of parts is shown with the reading order.)
+ */
+function showReadyStatus(pages: number) {
+  setStatus(`${pages} page${pages === 1 ? '' : 's'}${reader.state === 'playing' ? '' : ' · click any word to start there'}`);
+  readyPages = pages;
+}
+
 function setStatus(text: string) {
+  readyPages = 0;
   statusEl.textContent = text;
 }
 
