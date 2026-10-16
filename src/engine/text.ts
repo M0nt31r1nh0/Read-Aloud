@@ -49,21 +49,49 @@ export function lineChars(line: Line, includeScripts = false): SpokenChar[] {
   return trim(out);
 }
 
-export const lineText = (line: Line) => seqText(lineChars(line));
+/**
+ * A line's spoken text. Asked for again and again (margins, captions,
+ * figures, paragraphs), so it is remembered for each line's fragments.
+ */
+const lineTexts = new WeakMap<Line['fragments'], { count: number; text: string }>();
+export function lineText(line: Line): string {
+  const known = lineTexts.get(line.fragments);
+  if (known && known.count === line.fragments.length) return known.text;
+  const text = seqText(lineChars(line));
+  lineTexts.set(line.fragments, { count: line.fragments.length, text });
+  return text;
+}
+
+/** The fragments' text as printed, without inserted spaces. */
+export const printedText = (line: Line) => line.fragments.map((f) => f.text).join('').trim();
+
+/** A sentence ends here: ".", "!", "?" or ":", maybe followed by a quote or bracket. */
+export const ENDS_SENTENCE = /[.!?:]["'”’)\]]?$/;
+
+/**
+ * The text of sequences replaceAll returned, so a chain of replacements
+ * (makeUnit runs dozens) does not join the characters again for each one.
+ */
+const replacedTexts = new WeakMap<SpokenChar[], string>();
 
 /**
  * Replace every match of a global regex. Replacement characters inherit the
- * boxes of the characters they replace, spread proportionally.
+ * boxes of the characters they replace, spread proportionally. Returns `seq`
+ * itself when nothing matches.
  */
 export function replaceAll(
   seq: SpokenChar[],
   pattern: RegExp,
   replacement: string | ((match: string) => string),
 ): SpokenChar[] {
-  const text = seqText(seq);
+  const known = replacedTexts.get(seq);
+  const text = known !== undefined && known.length === seq.length ? known : seqText(seq);
   const out: SpokenChar[] = [];
+  let outText = '';
   let last = 0;
+  let matched = false;
   for (const m of text.matchAll(pattern)) {
+    matched = true;
     const start = m.index ?? 0;
     const source = seq.slice(start, start + m[0].length);
     const rep = typeof replacement === 'string' ? replacement : replacement(m[0]);
@@ -72,9 +100,15 @@ export function replaceAll(
       const from = source[Math.min(source.length - 1, Math.floor((i * source.length) / rep.length))];
       out.push({ ch: rep[i], box: from?.box ?? null });
     }
+    outText += text.slice(last, start) + rep;
     last = start + m[0].length;
   }
+  if (!matched) {
+    replacedTexts.set(seq, text);
+    return seq;
+  }
   out.push(...seq.slice(last));
+  replacedTexts.set(out, outText + text.slice(last));
   return out;
 }
 

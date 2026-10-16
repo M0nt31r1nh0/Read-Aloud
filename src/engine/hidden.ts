@@ -4,6 +4,7 @@
 // left under the body text. Such text sits on top of the text people read,
 // where nothing visible can be, and is dropped before lines are built.
 
+import { fragmentBox, overlaps, union } from './geometry';
 import type { Fragment, Rect } from './types';
 
 /** A copy needs this many runs in common with its original. */
@@ -42,8 +43,7 @@ export function dropHiddenText(fragments: Fragment[]): Fragment[] {
   for (const f of fragments) {
     if (f.text.trim().length < 2) continue;
     const key = `${f.text}|${Math.round(f.fontSize * 2)}`;
-    if (!byText.has(key)) byText.set(key, []);
-    byText.get(key)!.push(f);
+    byText.set(key, [...(byText.get(key) ?? []), f]);
   }
   const shifts = new Map<string, [Fragment, Fragment][]>();
   for (const same of byText.values()) {
@@ -55,8 +55,9 @@ export function dropHiddenText(fragments: Fragment[]): Fragment[] {
         const dy = Math.round(b.baseline - a.baseline);
         if (Math.abs(dx) + Math.abs(dy) < 5) continue;
         const key = `${dx},${dy}`;
-        if (!shifts.has(key)) shifts.set(key, []);
-        shifts.get(key)!.push([a, b]);
+        const pairs = shifts.get(key);
+        if (pairs) pairs.push([a, b]);
+        else shifts.set(key, [[a, b]]);
       }
     }
   }
@@ -68,7 +69,7 @@ export function dropHiddenText(fragments: Fragment[]): Fragment[] {
     if (share(copy) >= 0.25 && share(copy) > share(original) + 0.15) {
       // The whole copy, also its runs that have no twin elsewhere (single
       // letters): runs in the copy's area set in one of its fonts and sizes.
-      const area = bounds(copy);
+      const area = union(copy.map(fragmentBox));
       const styles = new Set(copy.map(style));
       for (const f of fragments) if (styles.has(style(f)) && inside(f, area)) hidden.add(f);
       for (const f of copy) hidden.add(f);
@@ -83,8 +84,9 @@ export function dropHiddenText(fragments: Fragment[]): Fragment[] {
  */
 function coverage(fragments: Fragment[]): Map<Fragment, number> {
   const result = new Map<Fragment, number>();
+  const boxes = new Map(fragments.map((f) => [f, fragmentBox(f)]));
   for (const f of fragments) {
-    const larger = fragments.filter((g) => g.fontSize >= 1.2 * f.fontSize && overlaps(box(f), box(g)));
+    const larger = fragments.filter((g) => g.fontSize >= 1.2 * f.fontSize && overlaps(boxes.get(f)!, boxes.get(g)!));
     if (!larger.length) {
       result.set(f, 0);
       continue;
@@ -105,14 +107,4 @@ function coverage(fragments: Fragment[]): Map<Fragment, number> {
 }
 
 const style = (f: Fragment) => `${f.fontName}|${Math.round(f.fontSize * 2)}`;
-const box = (f: Fragment): Rect => ({ x: f.x, y: f.top, w: f.width, h: f.height });
-const overlaps = (a: Rect, b: Rect) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 const inside = (f: Fragment, r: Rect) => f.x >= r.x - 1 && f.x + f.width <= r.x + r.w + 1 && f.top >= r.y - 1 && f.top + f.height <= r.y + r.h + 1;
-
-function bounds(group: Fragment[]): Rect {
-  const x0 = Math.min(...group.map((f) => f.x));
-  const y0 = Math.min(...group.map((f) => f.top));
-  const x1 = Math.max(...group.map((f) => f.x + f.width));
-  const y1 = Math.max(...group.map((f) => f.top + f.height));
-  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
-}

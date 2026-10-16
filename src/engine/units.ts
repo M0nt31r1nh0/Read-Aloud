@@ -9,21 +9,20 @@ import { median, right } from './geometry';
 import { Lexicon, lineJoin, repairLigatures } from './hyphenation';
 import { splitSentences } from './sentences';
 import { tableChars } from './tables';
-import { collapseSpaces, lineChars, lineText, normalizeChars, replaceAll, type SpokenChar } from './text';
+import { ENDS_SENTENCE, collapseSpaces, lineChars, lineText, normalizeChars, replaceAll, seqText, type SpokenChar } from './text';
 import type { AnalyzeOptions, CharBox, Line, PageLayout, ReadingUnit, Rect, Rule, UnitKind } from './types';
 
 // "Figure 3:", "Fig. 3.", "Table 2:", IEEE "TABLE IV" / "FIG. 2." (also alone on
 // their line). "Table 1 shows …" in body text does not match.
+export const CAPTION_START = /^(?:Figure|Fig\.|Table|FIGURE|FIG\.|TABLE)\s*(?:\d+|[IVXLC]+)(?:[.:]|\s*$)/;
 /** A caption's first line; not a sentence that wraps onto "Table 5. …". */
 export const isCaptionLine = (line: Line, text: string) => !line.inText && CAPTION_START.test(text);
 
-export const CAPTION_START = /^(?:Figure|Fig\.|Table|FIGURE|FIG\.|TABLE)\s*(?:\d+|[IVXLC]+)(?:[.:]|\s*$)/;
-// Section numbers: "3", "3.2", "3.2.1", "IV." — not "0.30." or "12 GPUs" (those
-// are rejected by context in isHeading). Letter numbering ("A. Proofs") is
-// left out: it collides with author initials.
-const NUMBERED_HEADING_PREFIX = /^\S+\s+/;
+// Section numbers: "3", "3.2", "3.2.1", "IV.", appendix "A.1" and "C" — not
+// "0.30." or "12 GPUs" (those are rejected by context in isHeading). "A. Proofs"
+// is left out: it collides with author initials.
 const NUMBERED_HEADING = /^(?:[1-9]\d?(?:\.\d{1,2}){0,3}\.?|[IVX]+\.|[A-H](?:\.\d{1,2}){1,3}\.?|[A-H])\s+\p{Lu}/u;
-const ENDS_SENTENCE = /[.!?:]["'”’)\]]?$/;
+const NUMBERED_HEADING_PREFIX = /^\S+\s+/;
 // A bracket group, optionally a range of two groups ("[3]–[5]").
 export const CITATION_PATTERN = /\s*\[([^[\]]{1,120})\](?:\s*[–-]\s*\[([^[\]]{1,120})\])?/g;
 /**
@@ -96,7 +95,7 @@ function spaceMathLetters(seq: SpokenChar[], lexicon: Lexicon): SpokenChar[] {
     }
     parts.forEach((part, k) => {
       if (k) out.push(SPACE);
-      const word = part.map((c) => c.ch).join('');
+      const word = seqText(part);
       const whole = word.length >= 3 && lexicon.knows(word);
       part.forEach((c, m) => {
         if (m && !whole) out.push(SPACE);
@@ -344,8 +343,8 @@ export function buildUnits(
   const pageOf = (u: ReadingUnit) => u.boxes.find((b) => b)?.page;
   for (let k = 0; k + 1 < units.length; k++) {
     const [table, caption] = [units[k], units[k + 1]];
-    const below = pageOf(table) === pageOf(caption) && top(caption) >= bottomOf(table) - 1;
-    if (table.kind === 'table' && caption.kind === 'caption' && /^Tab/.test(caption.text) && below) {
+    if (table.kind !== 'table' || caption.kind !== 'caption' || !/^Tab/.test(caption.text)) continue;
+    if (pageOf(table) === pageOf(caption) && top(caption) >= bottomOf(table) - 1) {
       [units[k], units[k + 1]] = [units[k + 1], units[k]];
       k++;
     }
@@ -539,7 +538,7 @@ function makeUnit(
         sameBlock(lastLine, item.line) &&
         item.line.baseline > lastLine.baseline + 1 &&
         // The rest of an address, not a sentence going on ("Answer: [Yes]").
-        !/^\p{Lu}\p{Ll}+[:,]?(?:\s|$)/u.test(chars.map((c) => c.ch).join(''))
+        !/^\p{Lu}\p{Ll}+[:,]?(?:\s|$)/u.test(seqText(chars))
       ) {
         // URLs are broken after "/", "." or "-" with nothing inserted.
       } else {
@@ -572,13 +571,13 @@ function makeUnit(
   if (options.expandAbbreviations) for (const [re, rep] of ABBREVIATIONS) seq = replaceAll(seq, re, rep);
   seq = collapseSpaces(seq);
 
-  const text = seq.map((c) => c.ch).join('');
+  const text = seqText(seq);
   return { id, kind, text, boxes: seq.map((c) => c.box), sentences: splitSentences(text) };
 }
 
 const SPACE: SpokenChar = { ch: ' ', box: null };
 
-const tail = (seq: SpokenChar[]) => seq.slice(-200).map((c) => c.ch).join('');
+const tail = (seq: SpokenChar[]) => seqText(seq.slice(-200));
 
 /**
  * Display maths as speech: "equation 3" (or the raw text when asked), with
@@ -586,7 +585,6 @@ const tail = (seq: SpokenChar[]) => seq.slice(-200).map((c) => c.ch).join('');
  * covers the formula while it is announced.
  */
 function equationChars(lines: Line[], raw: boolean, standalone: boolean): SpokenChar[] {
-  const glyphs = lines.flatMap((l) => lineChars(l, true));
   if (raw) {
     const out: SpokenChar[] = [];
     lines.forEach((l, i) => {
@@ -598,7 +596,7 @@ function equationChars(lines: Line[], raw: boolean, standalone: boolean): Spoken
   const numbers = lines.map((l) => lineText(l).match(EQUATION_NUMBER)?.[1]).filter((n): n is string => !!n);
   let spoken = numbers.length === 0 ? 'equation' : numbers.length === 1 ? `equation ${numbers[0]}` : `equations ${listOf(numbers)}`;
   if (standalone) spoken = `${spoken[0].toUpperCase()}${spoken.slice(1)}.`;
-  const boxes = glyphs.map((g) => g.box).filter((b): b is CharBox => b !== null);
+  const boxes = lines.flatMap((l) => lineChars(l, true)).map((g) => g.box).filter((b) => b !== null);
   return [...spoken].map((ch, i) => ({ ch, box: boxes[Math.floor((i * boxes.length) / spoken.length)] ?? null }));
 }
 

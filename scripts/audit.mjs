@@ -5,26 +5,14 @@
 // not ending in punctuation, left-over running headers, odd hyphen joins,
 // symbols a voice would mispronounce, highlight boxes off the page, and
 // units that zig-zag back to an earlier column on the same page.
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { createServer } from 'vite';
-import { getDocument, OPS } from 'pdfjs-dist/legacy/build/pdf.mjs';
-import { readDictionaryWords } from './dictionary-source.mjs';
+import { analyzePdf } from './analyze-pdf.mjs';
 
 const file = process.argv[2];
 if (!file) {
   console.error('usage: npm run audit -- <file.pdf>');
   process.exit(1);
 }
-const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const server = await createServer({ root, appType: 'custom', logLevel: 'error', server: { middlewareMode: true, hmr: false } });
-const engine = await server.ssrLoadModule('/src/engine/index.ts');
-const doc = await getDocument({ data: new Uint8Array(fs.readFileSync(file)), verbosity: 0, fontExtraProperties: true }).promise;
-const pages = [];
-for (let i = 1; i <= doc.numPages; i++) pages.push(await engine.extractPage(await doc.getPage(i), i - 1, undefined, OPS));
-const analysis = engine.analyzeDocument(pages, engine.DEFAULT_OPTIONS, new Set(readDictionaryWords()));
-await server.close();
+const analysis = await analyzePdf(file);
 
 const findings = [];
 const flag = (unit, kind, detail) =>
@@ -32,6 +20,7 @@ const flag = (unit, kind, detail) =>
 const headerTexts = new Set(
   analysis.pages.flatMap((p) => p.dropped.filter((l) => l.role !== 'figure').map((l) => l.fragments.map((f) => f.text).join('').trim())),
 );
+const pageOf = new Map(analysis.pages.map((p) => [p.page, p]));
 
 for (const unit of analysis.units) {
   const t = unit.text;
@@ -41,7 +30,6 @@ for (const unit of analysis.units) {
   for (const m of t.matchAll(/\p{L}+-\s\p{Ll}+|\p{Ll}-\p{Ll}{1,3}\b/gu)) flag(unit, 'hyphen-join', m[0]);
   for (const m of t.matchAll(/[+§¶†‡∗*]|\s{2,}|�/gu)) flag(unit, 'odd-symbol', JSON.stringify(t.slice(Math.max(0, m.index - 20), m.index + 20)));
 
-  const pageOf = new Map(analysis.pages.map((p) => [p.page, p]));
   let lastColumn = null;
   let last = null;
   for (const b of unit.boxes) {

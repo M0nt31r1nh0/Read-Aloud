@@ -120,7 +120,9 @@ button.primary {
 }
 
 button.accent:hover:not(:disabled),
-button.primary:hover:not(:disabled) {
+button.primary:hover:not(:disabled),
+button.play:hover:not(:disabled),
+button.back-to-reading:hover:not(:disabled) {
   background: var(--accent-hover);
   border-color: var(--accent-hover);
 }
@@ -318,7 +320,9 @@ select {
   box-shadow: var(--shadow-pop);
 }
 
-.filters-panel[hidden] {
+/* `display` set above would otherwise show them. */
+.filters-panel[hidden],
+.back-to-reading[hidden] {
   display: none;
 }
 
@@ -453,10 +457,6 @@ button.play {
   box-shadow: 0 4px 12px rgba(59, 111, 224, 0.35);
 }
 
-button.play:hover:not(:disabled) {
-  background: var(--accent-hover);
-}
-
 button.play svg {
   width: 22px;
   height: 22px;
@@ -545,15 +545,6 @@ button.play[data-state='playing'] .when-playing {
   color: #fff;
   font-weight: 600;
   box-shadow: 0 4px 16px rgba(59, 111, 224, 0.45), var(--shadow-pop);
-  cursor: pointer;
-}
-
-.back-to-reading:hover:not(:disabled) {
-  background: var(--accent-hover);
-}
-
-.back-to-reading[hidden] {
-  display: none;
 }
 
 /* "A new version has been deployed": in a corner, so reading goes on. */

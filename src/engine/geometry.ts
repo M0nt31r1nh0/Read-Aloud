@@ -1,8 +1,11 @@
-import type { Rect } from './types';
+import type { Fragment, Rect } from './types';
 
 export const right = (r: Rect) => r.x + r.w;
 export const bottom = (r: Rect) => r.y + r.h;
 export const centerX = (r: Rect) => r.x + r.w / 2;
+
+export const fragmentBox = (f: Fragment): Rect => ({ x: f.x, y: f.top, w: f.width, h: f.height });
+export const overlaps = (a: Rect, b: Rect) => a.x < right(b) && b.x < right(a) && a.y < bottom(b) && b.y < bottom(a);
 
 export function union(rects: Rect[]): Rect {
   let x0 = Infinity;

@@ -1,4 +1,4 @@
-// Writes a two-page, two-column "paper" PDF used by the tests and the demo.
+// Writes a four-page, two-column "paper" PDF used by the tests.
 //
 // The content stream is emitted row by row across both columns (sorted by y,
 // then x), the order that makes naive readers jump from side to side. It
@@ -7,7 +7,8 @@
 // superscript footnote mark, an author line split by an affiliation mark, a
 // caption inside a paragraph, a broken "Th" ligature glyph ("+e"), an
 // equation number, numeric citations, abbreviations, a running header and
-// page numbers.
+// page numbers; then display maths, a figure, a numbered list, references
+// and three tables (plain, bordered and booktabs).
 //
 // Usage: node scripts/make-fixture.mjs   (writes test/fixtures/two-column.pdf)
 
@@ -264,11 +265,9 @@ export function buildFixturePdf() {
 // Run directly (not imported by the tests). Compared as URLs so Windows paths
 // ("C:\\...") match too.
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
-  const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const target = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'test/fixtures/two-column.pdf');
   const pdf = buildFixturePdf();
-  for (const target of ['test/fixtures/two-column.pdf']) {
-    fs.mkdirSync(path.dirname(path.join(root, target)), { recursive: true });
-    fs.writeFileSync(path.join(root, target), pdf);
-    console.log(`wrote ${target} (${pdf.length} bytes)`);
-  }
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, pdf);
+  console.log(`wrote test/fixtures/two-column.pdf (${pdf.length} bytes)`);
 }

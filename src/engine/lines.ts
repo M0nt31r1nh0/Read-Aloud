@@ -2,11 +2,12 @@
 // the same baseline are split wherever the horizontal gap is wider than a
 // word space could plausibly be.
 
-import { centerX, right, union } from './geometry';
+import { centerX, fragmentBox, right, union } from './geometry';
+import { printedText } from './text';
 import type { Fragment, Line } from './types';
 
 /** Gap (in ems) above which two runs on one baseline are different lines. */
-export const COLUMN_GAP_EM = 0.8;
+const COLUMN_GAP_EM = 0.8;
 const SECTION_NUMBER = /^(?:[1-9]\d?(?:\.\d{1,2}){0,3}\.?|[IVX]+\.|[A-Z]\.\d*)$/;
 
 export function buildLines(fragments: Fragment[]): Line[] {
@@ -169,7 +170,7 @@ function attachFractions(lines: Line[]): Line[] {
         ...bottomLine.fragments,
         ...(after?.fragments ?? []),
       ];
-      host.box = union([before?.box, after?.box, top.box, bottomLine.box].filter((b): b is Line['box'] => !!b));
+      host.box = union([before?.box, after?.box, top.box, bottomLine.box].filter((b) => b !== undefined));
       if (before && after) used.add(after);
       used.add(top).add(bottomLine);
       break;
@@ -188,7 +189,7 @@ function rejoinRows(lines: Line[]): Line[] {
   for (const line of sorted) {
     const prev = out[out.length - 1];
     // A bare section number ("4.2.1") is set a quad away from its title.
-    const maxGap = prev && SECTION_NUMBER.test(prev.fragments.map((f) => f.text).join('').trim()) ? 2 : COLUMN_GAP_EM;
+    const maxGap = prev && SECTION_NUMBER.test(printedText(prev)) ? 2 : COLUMN_GAP_EM;
     const sameRow =
       prev &&
       prev.page === line.page &&
@@ -218,8 +219,4 @@ export function makeLine(fragments: Fragment[]): Line {
     fontSize: main.fontSize,
     fontName: main.fontName,
   };
-}
-
-export function fragmentBox(f: Fragment) {
-  return { x: f.x, y: f.top, w: f.width, h: f.height };
 }

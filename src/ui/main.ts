@@ -11,6 +11,7 @@ import {
   type Dictionary,
   type DocumentAnalysis,
   type PageText,
+  type Rect,
 } from '../engine';
 import { SpeakingSpeed, countWords, formatDuration, wordsLeft } from '../speech/estimate';
 import { Reader, type ReaderState } from '../speech/reader';
@@ -20,11 +21,11 @@ import { watchForUpdates, type UpdateWatch } from './updates';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
-const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
-const pagesEl = $<HTMLElement>('pages');
-const transcriptEl = $<HTMLElement>('transcript');
-const statusEl = $<HTMLElement>('status');
-const docTitleEl = $<HTMLElement>('doc-title');
+const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
+const pagesEl = $('pages');
+const transcriptEl = $('transcript');
+const statusEl = $('status');
+const docTitleEl = $('doc-title');
 /** Pages in the open PDF while the status shows it (0: another message is shown). */
 let readyPages = 0;
 const playBtn = $<HTMLButtonElement>('play');
@@ -187,10 +188,10 @@ function createPageView(page: pdfjs.PDFPageProxy, index: number): PageView {
 
 // ---------- reading time ----------
 
-const readTimeEl = $<HTMLElement>('read-time');
-const progressEl = readTimeEl.parentElement!.querySelector<HTMLElement>('.progress')!;
-const progressFill = $<HTMLElement>('progress-fill');
-const progressLabel = $<HTMLElement>('progress-label');
+const readTimeEl = $('read-time');
+const progressFill = $('progress-fill');
+const progressEl = progressFill.parentElement!;
+const progressLabel = $('progress-label');
 const speakingSpeed = new SpeakingSpeed(
   (() => {
     try {
@@ -201,6 +202,14 @@ const speakingSpeed = new SpeakingSpeed(
   })(),
 );
 
+const START = { unit: 0, char: 0 };
+
+/** Reading has begun: there is a position to show and count from. */
+function hasStarted() {
+  const pos = reader.position;
+  return reader.state !== 'idle' || pos.unit > 0 || pos.char > 0;
+}
+
 /**
  * "≈ 47 min" for the whole document before reading starts, "≈ 31 min left"
  * from the current word once it has: the words still to read (after the
@@ -209,15 +218,14 @@ const speakingSpeed = new SpeakingSpeed(
 function updateReadTime() {
   readTimeEl.hidden = !analysis;
   if (!analysis) return;
-  const voice = speechSynthesis.getVoices()[Number(voiceSelect.value)]?.name ?? '';
+  const voice = selectedVoice()?.name ?? '';
   const rate = Number(rateInput.value) || 1;
-  const pos = reader.position;
-  const started = reader.state !== 'idle' || pos.unit > 0 || pos.char > 0;
-  const words = wordsLeft(analysis.units, started ? pos : { unit: 0, char: 0 });
+  const started = hasStarted();
+  const words = wordsLeft(analysis.units, started ? reader.position : START);
   const time = formatDuration(speakingSpeed.minutes(words, voice, rate));
   readTimeEl.textContent = started ? `≈ ${time} left` : `≈ ${time}`;
   // How far through the document, by words still to read.
-  const total = wordsLeft(analysis.units, { unit: 0, char: 0 });
+  const total = wordsLeft(analysis.units, START);
   const percent = total ? Math.round((100 * (total - words)) / total) : 0;
   progressFill.style.width = `${percent}%`;
   progressLabel.textContent = `${percent}%`;
@@ -229,7 +237,7 @@ function updateReadTime() {
 // ---------- page number and number fields ----------
 
 const pageInput = $<HTMLInputElement>('page-input');
-const pageCount = $<HTMLElement>('page-count');
+const pageCount = $('page-count');
 
 /**
  * A field that takes whole numbers only: anything else typed or pasted is
@@ -282,7 +290,7 @@ function updatePageIndicator() {
   pagePrev.disabled = page <= 0;
   pageNext.disabled = page >= views.length - 1;
   pageCount.textContent = `/ ${views.length || '–'}`;
-  if (document.activeElement !== pageInput) pageInput.value = views.length ? String(visiblePage() + 1) : '';
+  if (document.activeElement !== pageInput) pageInput.value = views.length ? String(page + 1) : '';
 }
 
 /** Show page `number` (1-based, clamped). While reading, this is exploring. */
@@ -306,15 +314,7 @@ pageInput.addEventListener('keydown', (e) => {
   goToPage(visiblePage() + 1 + (e.key === 'ArrowUp' ? 1 : -1));
   pageInput.select();
 });
-let pageQueued = false;
-pagesEl.addEventListener('scroll', () => {
-  if (pageQueued) return;
-  pageQueued = true;
-  requestAnimationFrame(() => {
-    pageQueued = false;
-    updatePageIndicator();
-  });
-});
+onScrollFrame(pagesEl, updatePageIndicator);
 
 // ---------- zoom ----------
 
@@ -490,34 +490,49 @@ function drawRects(unitIndex: number, start: number, end: number, kind: 'sentenc
   const unit = analysis?.units[unitIndex];
   if (!unit) return [];
   drawn[kind] = [unitIndex, start, end];
-  return rectsFor(unit, start, end).map((r) => {
-    const view = views[r.page];
-    const el = document.createElement('div');
-    el.className = `hl-${kind}`;
-    Object.assign(el.style, {
-      left: `${r.x * view.scale - 1}px`,
-      top: `${r.y * view.scale - 1}px`,
-      width: `${r.w * view.scale + 2}px`,
-      height: `${r.h * view.scale + 2}px`,
-    });
-    view.overlay.append(el);
-    return el;
+  return rectsFor(unit, start, end).map((r) => placeBox(r.page, r, `hl-${kind}`, 1));
+}
+
+/** A box over page `page` at `r` (in PDF points), `pad` CSS pixels larger all round. */
+function placeBox(page: number, r: Rect, className: string, pad: number) {
+  const view = views[page];
+  const el = document.createElement('div');
+  el.className = className;
+  Object.assign(el.style, {
+    left: `${r.x * view.scale - pad}px`,
+    top: `${r.y * view.scale - pad}px`,
+    width: `${r.w * view.scale + 2 * pad}px`,
+    height: `${r.h * view.scale + 2 * pad}px`,
   });
+  view.overlay.append(el);
+  return el;
 }
 
 function showSentence(unitIndex: number, start: number, end: number) {
   drawRects(unitIndex, start, end, 'sentence');
-  for (const li of transcriptEl.querySelectorAll('li.current')) {
-    li.classList.remove('current');
-    li.innerHTML = escapeHtml(analysis!.units[Number((li as HTMLElement).dataset.unit)].text);
-  }
+  unmarkTranscript();
   const li = transcriptEl.querySelector<HTMLLIElement>(`li[data-unit="${unitIndex}"]`);
   if (li) {
     const text = analysis!.units[unitIndex].text;
+    const mark = document.createElement('mark');
+    mark.textContent = text.slice(start, end);
     li.classList.add('current');
-    li.innerHTML = `${escapeHtml(text.slice(0, start))}<mark>${escapeHtml(text.slice(start, end))}</mark>${escapeHtml(text.slice(end))}`;
+    li.replaceChildren(text.slice(0, start), mark, text.slice(end));
     if (following.transcript) revealIn(transcriptEl, li, 'nearest', 'auto');
   }
+}
+
+/** The reading-order entry being read goes back to plain text. */
+function unmarkTranscript() {
+  for (const li of transcriptEl.querySelectorAll<HTMLElement>('li.current')) {
+    li.classList.remove('current');
+    li.textContent = analysis?.units[Number(li.dataset.unit)]?.text ?? li.textContent;
+  }
+}
+
+/** The highlighted word, or the sentence while no word is. */
+function readingMark() {
+  return pagesEl.querySelector<HTMLElement>('.hl-word') ?? pagesEl.querySelector<HTMLElement>('.hl-sentence');
 }
 
 function showWord(unitIndex: number, start: number, end: number) {
@@ -572,13 +587,18 @@ for (const [container, which] of [
     const onScrollbar = e.clientX >= r.left + container.clientWidth || e.clientY >= r.top + container.clientHeight;
     if (e.target === container && onScrollbar) letGo(which);
   });
+  onScrollFrame(container, updateBackButton);
+}
+
+/** Runs `update` once per frame while `el` scrolls. */
+function onScrollFrame(el: HTMLElement, update: () => void) {
   let queued = false;
-  container.addEventListener('scroll', () => {
+  el.addEventListener('scroll', () => {
     if (queued) return;
     queued = true;
     requestAnimationFrame(() => {
       queued = false;
-      updateBackButton();
+      update();
     });
   });
 }
@@ -590,7 +610,7 @@ function followReading(reveal: boolean) {
   ignoreGesture = performance.now() - lastWheel < GESTURE_GAP;
   backButton.hidden = true;
   if (!reveal) return;
-  const word = pagesEl.querySelector<HTMLElement>('.hl-word') ?? pagesEl.querySelector<HTMLElement>('.hl-sentence');
+  const word = readingMark();
   if (word) revealIn(pagesEl, word, 'center', 'smooth');
   const li = transcriptEl.querySelector<HTMLElement>('li.current');
   if (li) revealIn(transcriptEl, li, 'nearest', 'smooth');
@@ -601,7 +621,7 @@ function followReading(reveal: boolean) {
  * word being read is out of view, "Follow reading" while it is in view.
  */
 function updateBackButton() {
-  const word = pagesEl.querySelector<HTMLElement>('.hl-word') ?? pagesEl.querySelector<HTMLElement>('.hl-sentence');
+  const word = readingMark();
   const li = transcriptEl.querySelector<HTMLElement>('li.current');
   const away = (container: HTMLElement, el: HTMLElement | null) => {
     if (!el) return 0;
@@ -677,18 +697,9 @@ function renderTranscript() {
 function renderLayout() {
   for (const el of pagesEl.querySelectorAll('.debug')) el.remove();
   if (!analysis || !$<HTMLInputElement>('opt-layout').checked) return;
-  const place = (page: number, r: { x: number; y: number; w: number; h: number }, cls: string, label?: string) => {
-    const view = views[page];
-    const el = document.createElement('div');
-    el.className = `debug ${cls}`;
-    Object.assign(el.style, {
-      left: `${r.x * view.scale - 3}px`,
-      top: `${r.y * view.scale - 3}px`,
-      width: `${r.w * view.scale + 6}px`,
-      height: `${r.h * view.scale + 6}px`,
-    });
+  const place = (page: number, r: Rect, cls: string, label?: string) => {
+    const el = placeBox(page, r, `debug ${cls}`, 3);
     if (label) el.dataset.label = label;
-    view.overlay.append(el);
   };
   for (const p of analysis.pages) {
     for (const b of p.blocks) place(p.page, b.box, `block ${b.kind}`, `${b.order + 1}`);
@@ -716,10 +727,7 @@ function updatePlayButton(state: ReaderState) {
   if (state === 'idle') {
     followReading(false);
     clearHighlights();
-    for (const li of transcriptEl.querySelectorAll<HTMLElement>('li.current')) {
-      li.classList.remove('current');
-      li.textContent = analysis?.units[Number(li.dataset.unit)]?.text ?? li.textContent;
-    }
+    unmarkTranscript();
   }
 }
 
@@ -728,7 +736,9 @@ function updatePlayButton(state: ReaderState) {
 // Speed, voice and filters are remembered in the browser as soon as they
 // change (like the zoom): they survive updates, with or without a PDF open,
 // and closing and reopening the app.
-const FILTER_IDS = ['opt-layout', 'opt-citations', 'opt-captions', 'opt-tables', 'opt-abbrev', 'opt-footnotes', 'opt-equations'];
+/** The filters that change what is read (the layout view only draws). */
+const ANALYSIS_IDS = ['opt-citations', 'opt-captions', 'opt-tables', 'opt-abbrev', 'opt-footnotes', 'opt-equations'];
+const FILTER_IDS = ['opt-layout', ...ANALYSIS_IDS];
 const SETTINGS_KEY = 'read-aloud:settings';
 
 interface Settings {
@@ -754,12 +764,33 @@ function saveSettings() {
       JSON.stringify({
         rate: Number(rateInput.value),
         voice: chosenVoice,
-        options: Object.fromEntries(FILTER_IDS.map((id) => [id, $<HTMLInputElement>(id).checked])),
+        options: filterStates(),
       } satisfies Settings),
     );
   } catch {
     // Settings are then not remembered; nothing else depends on it.
   }
+}
+
+function filterStates() {
+  return Object.fromEntries(FILTER_IDS.map((id) => [id, $<HTMLInputElement>(id).checked]));
+}
+
+function setFilterStates(states: Record<string, boolean>) {
+  for (const [id, checked] of Object.entries(states)) {
+    const box = document.getElementById(id);
+    if (box instanceof HTMLInputElement) box.checked = checked;
+  }
+}
+
+/** Show the Speed setting and give it to the reader. */
+function applyRate() {
+  $<HTMLOutputElement>('rate-value').textContent = `${Number(rateInput.value).toFixed(1)}×`;
+  reader.setRate(Number(rateInput.value));
+}
+
+function selectedVoice(): SpeechSynthesisVoice | undefined {
+  return speechSynthesis.getVoices()[Number(voiceSelect.value)];
 }
 
 function loadVoices() {
@@ -788,41 +819,37 @@ speechSynthesis.addEventListener('voiceschanged', () => {
 });
 loadVoices();
 voiceSelect.addEventListener('change', () => {
-  const voice = speechSynthesis.getVoices()[Number(voiceSelect.value)] ?? null;
+  const voice = selectedVoice() ?? null;
   chosenVoice = voice?.name ?? '';
   reader.setVoice(voice);
   updateReadTime();
   saveSettings();
 });
 rateInput.addEventListener('input', () => {
-  $<HTMLOutputElement>('rate-value').textContent = `${Number(rateInput.value).toFixed(1)}×`;
-  reader.setRate(Number(rateInput.value));
+  applyRate();
   updateReadTime();
   saveSettings();
 });
 
+/** ⏭ / ⏮ (buttons and arrow keys): the view follows the reading again. */
+function stepSentence(direction: 1 | -1) {
+  followReading(false);
+  if (direction > 0) reader.next();
+  else reader.previous();
+}
+
 playBtn.addEventListener('click', () => analysis && reader.toggle());
 $('stop').addEventListener('click', () => reader.stop());
-$('next').addEventListener('click', () => {
-  followReading(false);
-  reader.next();
-});
-$('prev').addEventListener('click', () => {
-  followReading(false);
-  reader.previous();
-});
+$('next').addEventListener('click', () => stepSentence(1));
+$('prev').addEventListener('click', () => stepSentence(-1));
 // The remembered settings, put back before any PDF is opened.
-for (const [id, checked] of Object.entries(savedSettings.options ?? {})) {
-  const box = document.getElementById(id);
-  if (box instanceof HTMLInputElement) box.checked = checked;
-}
+setFilterStates(savedSettings.options ?? {});
 if (savedSettings.rate) {
   rateInput.value = String(savedSettings.rate);
-  $<HTMLOutputElement>('rate-value').textContent = `${Number(rateInput.value).toFixed(1)}×`;
-  reader.setRate(Number(rateInput.value));
+  applyRate();
 }
 for (const id of FILTER_IDS) $(id).addEventListener('change', saveSettings);
-for (const id of ['opt-citations', 'opt-captions', 'opt-tables', 'opt-abbrev', 'opt-footnotes', 'opt-equations']) $(id).addEventListener('change', () => analysis && analyze());
+for (const id of ANALYSIS_IDS) $(id).addEventListener('change', () => analysis && analyze());
 $('opt-layout').addEventListener('change', renderLayout);
 
 for (const id of ['open', 'empty-open']) $(id).addEventListener('click', () => $<HTMLInputElement>('file').click());
@@ -906,14 +933,9 @@ document.addEventListener('keydown', (e) => {
     // which would undo the toggle.
     e.preventDefault();
     reader.toggle();
-  } else if (e.key === 'ArrowRight') {
+  } else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
     e.preventDefault();
-    followReading(false);
-    reader.next();
-  } else if (e.key === 'ArrowLeft') {
-    e.preventDefault();
-    followReading(false);
-    reader.previous();
+    stepSentence(e.key === 'ArrowRight' ? 1 : -1);
   } else if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End'].includes(e.key)) {
     // Scrolling with the keyboard frees the view like the mouse does.
     letGo(lastScrolled);
@@ -927,7 +949,7 @@ function isPdf(file: File) {
 
 // ---------- environments and updates ----------
 
-const versionEl = $<HTMLElement>('version');
+const versionEl = $('version');
 let updateWatch: UpdateWatch | null = null;
 const appVersion: string | undefined = import.meta.env.VITE_APP_VERSION;
 if (import.meta.env.DEV) {
@@ -950,18 +972,16 @@ if (import.meta.env.DEV) {
 
 async function saveCurrentSession() {
   if (!openFile) return;
-  const voice = speechSynthesis.getVoices()[Number(voiceSelect.value)];
-  const position = reader.position;
   await saveSession({
     ...openFile,
-    position,
-    options: Object.fromEntries(FILTER_IDS.map((id) => [id, $<HTMLInputElement>(id).checked])),
+    position: reader.position,
+    options: filterStates(),
     rate: Number(rateInput.value),
-    voice: voice?.name ?? '',
+    voice: selectedVoice()?.name ?? '',
     scrollTop: pagesEl.scrollTop,
     view: viewSpot() ?? undefined,
     listScrollTop: transcriptEl.scrollTop,
-    started: reader.state !== 'idle' || position.unit > 0 || position.char > 0,
+    started: hasStarted(),
     following: following.pages,
     savedAt: Date.now(),
   });
@@ -988,10 +1008,7 @@ function showSpot(spot: { page: number; down: number; right: number }) {
 // After "Update now": reopen the PDF where it was, with the same settings.
 void takeSession().then(async (session) => {
   if (!session) return;
-  for (const [id, checked] of Object.entries(session.options)) {
-    const box = document.getElementById(id);
-    if (box instanceof HTMLInputElement) box.checked = checked;
-  }
+  setFilterStates(session.options);
   rateInput.value = String(session.rate);
   rateInput.dispatchEvent(new Event('input'));
   const restoreVoice = () => {
@@ -1047,8 +1064,4 @@ function showError(err: unknown) {
     return;
   }
   setStatus(`Could not open the PDF: ${message}`);
-}
-
-function escapeHtml(s: string) {
-  return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 }

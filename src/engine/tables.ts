@@ -11,8 +11,9 @@
 // Only text printed in the table is spoken, plus punctuation for pauses.
 
 import { bottom, centerX, right, union } from './geometry';
+import type { JoinDecision } from './hyphenation';
 import { makeLine } from './lines';
-import { lineChars, type SpokenChar } from './text';
+import { lineChars, lineText, printedText, type SpokenChar } from './text';
 import type { Line, Rect, Rule } from './types';
 
 interface Cell {
@@ -31,13 +32,13 @@ interface Grid {
 }
 
 /** How to join the next line of a cell: as for paragraphs (hyphen handling). */
-export type CellJoin = (seq: SpokenChar[], next: SpokenChar[]) => 'join' | 'keep' | 'space';
+export type CellJoin = (seq: SpokenChar[], next: SpokenChar[]) => JoinDecision;
 
 export function tableChars(lines: Line[], rules: Rule[], join?: CellJoin): SpokenChar[] {
   return speak(buildGrid(lines, rules), join);
 }
 
-export function buildGrid(tableLines: Line[], rules: Rule[]): Grid {
+function buildGrid(tableLines: Line[], rules: Rule[]): Grid {
   const lines = tableLines.flatMap(splitCells);
   const box = union(lines.map((l) => l.box));
   const pad = 8;
@@ -86,8 +87,9 @@ function ruledGrid(lines: Line[], vertical: Rule[], horizontal: Rule[], box: Rec
   for (const line of lines) {
     const edges = edgesOf(line);
     const key = [edges.left, edges.right, edges.top, edges.bottom].map((v) => v.toFixed(1)).join();
-    if (!groups.has(key)) groups.set(key, { edges, lines: [] });
-    groups.get(key)!.lines.push(line);
+    const group = groups.get(key);
+    if (group) group.lines.push(line);
+    else groups.set(key, { edges, lines: [line] });
   }
 
   // Grid lines: cell edges, with double rules (two lines ~2pt apart) merged.
@@ -175,8 +177,8 @@ function alignedGrid(tableLines: Line[], horizontal: Rule[] = []): Grid {
       .map(([c]) => c);
     return hit.length ? [Math.max(c0, Math.min(...hit)), Math.min(c1, Math.max(...hit))].sort((a, b) => a - b) : [c0, c1];
   };
-  const spanning = new Set(lines.filter((l) => colsOf(l)[1] > colsOf(l)[0]));
-  const isAnchor = (l: Line) => colsOf(l)[0] === 0 && !spanning.has(l);
+  const cols = new Map(lines.map((l) => [l, colsOf(l)]));
+  const isAnchor = (l: Line) => cols.get(l)![0] === 0 && cols.get(l)![1] === 0;
 
   // A rule with text both above and below it (booktabs' \midrule) ends the
   // header: everything above it is one header row, however many lines.
@@ -186,16 +188,14 @@ function alignedGrid(tableLines: Line[], horizontal: Rule[] = []): Grid {
     .find((y) => lines.some((l) => bottom(l.box) <= y + 1) && lines.some((l) => l.box.y >= y - 1));
   const headerLines = midrule === undefined ? [] : lines.filter((l) => bottom(l.box) <= midrule + 1);
   const bodyVisual = midrule === undefined ? visual : visual.map((row) => row.filter((l) => !headerLines.includes(l))).filter((row) => row.length);
-  const rows = [...(headerLines.length ? [headerLines] : []), ...assignRows(bodyVisual, isAnchor, (l) => colsOf(l).join('-'))];
+  const rows = [...(headerLines.length ? [headerLines] : []), ...assignRows(bodyVisual, isAnchor, (l) => cols.get(l)!.join('-'))];
 
   const cells: Cell[] = [];
   rows.forEach((row, r) => {
     const byCols = new Map<string, Line[]>();
     for (const line of row) {
-      const [c0, c1] = colsOf(line);
-      const key = `${c0}-${c1}`;
-      if (!byCols.has(key)) byCols.set(key, []);
-      byCols.get(key)!.push(line);
+      const key = cols.get(line)!.join('-');
+      byCols.set(key, [...(byCols.get(key) ?? []), line]);
     }
     for (const [key, cellLines] of byCols) {
       const [c0, c1] = key.split('-').map(Number);
@@ -268,10 +268,10 @@ const headerColumn = new WeakMap<Line, number>();
  */
 function assignRows(visual: Line[][], isAnchor: (l: Line) => boolean, columnOf: (l: Line) => string): Line[][] {
   const mid = (ls: Line[]) => (Math.min(...ls.map((l) => l.baseline)) + Math.max(...ls.map((l) => l.baseline))) / 2;
-  const text = (l: Line) => l.fragments.map((f) => f.text).join('').trim();
+  // A cell starts with a capital, digit or bullet; its wrapped lines do not.
+  const startsCell = (l: Line) => /^[\p{Lu}\p{N}•·(\[]/u.test(printedText(l));
 
   const anchors: Line[][] = [];
-  const startsCell = (l: Line) => /^[\p{Lu}\p{N}•·(\[]/u.test(text(l));
   for (const row of visual) {
     const labels = row.filter(isAnchor);
     if (!labels.length) continue;
@@ -300,8 +300,7 @@ function assignRows(visual: Line[][], isAnchor: (l: Line) => boolean, columnOf: 
   for (const line of visual.flat()) {
     if (anchored.has(line)) continue;
     const key = columnOf(line);
-    if (!byColumn.has(key)) byColumn.set(key, []);
-    byColumn.get(key)!.push(line);
+    byColumn.set(key, [...(byColumn.get(key) ?? []), line]);
   }
   const rows = anchors.map((a) => [...a]);
   for (const lines of byColumn.values()) {
@@ -313,7 +312,7 @@ function assignRows(visual: Line[][], isAnchor: (l: Line) => boolean, columnOf: 
       const continues =
         prev !== undefined &&
         line.baseline - prev.baseline <= 1.6 * line.fontSize &&
-        (/[-\u2010]$/.test(text(prev)) || !/^[\p{Lu}\p{N}•·(\[]/u.test(text(line)));
+        (/[-\u2010]$/.test(printedText(prev)) || !startsCell(line));
       if (continues) cell.push(line);
       else cells.push([line]);
     }
@@ -330,7 +329,7 @@ function assignRows(visual: Line[][], isAnchor: (l: Line) => boolean, columnOf: 
 
 /** A label line that continues on the next line ("Vishwakarma et al." / "[12]"). */
 const isWrapped = (l: Line) => {
-  const text = l.fragments.map((f) => f.text).join('').trim();
+  const text = printedText(l);
   return !/[.:;?!]$/.test(text) || /et al\.$/.test(text);
 };
 
@@ -353,7 +352,9 @@ function speak({ cells, rows, cols }: Grid, join?: CellJoin): SpokenChar[] {
   const out: SpokenChar[] = [];
   const say = (text: string) => {
     // Do not double punctuation the cell text already ends with ("analysis..").
-    const last = [...out].reverse().find((c) => c.ch !== ' ')?.ch ?? '';
+    let k = out.length - 1;
+    while (k >= 0 && out[k].ch === ' ') k--;
+    const last = out[k]?.ch ?? '';
     // A colon after a label ending in "et al." stays.
     if (/^[.;,]/.test(text) && /[.:;,?!]/.test(last)) text = text.slice(1);
     else if (text.startsWith(':') && /[:;,?!]/.test(last)) text = text.slice(1);
@@ -372,7 +373,7 @@ function speak({ cells, rows, cols }: Grid, join?: CellJoin): SpokenChar[] {
       out.push(...chars);
     });
   };
-  const cellText = (cell: Cell) => cell.lines.map((l) => lineChars(l).map((c) => c.ch).join('')).join(' ');
+  const cellText = (cell: Cell) => cell.lines.map(lineText).join(' ');
 
   // Column labels: the lowest header cell over each data column; header
   // cells spanning several data columns are group titles, said once.

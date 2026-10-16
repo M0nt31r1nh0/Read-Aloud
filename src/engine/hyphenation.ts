@@ -8,7 +8,7 @@
 //  3. without a dictionary, conservative guesses (see decide()).
 
 import type { Dictionary } from './dictionary';
-import type { SpokenChar } from './text';
+import { ENDS_SENTENCE, seqText, type SpokenChar } from './text';
 
 export type JoinDecision = 'join' | 'keep' | 'space';
 
@@ -22,8 +22,9 @@ const SUFFIX =
 export class Lexicon {
   private words = new Map<string, number>();
   private compounds = new Map<string, number>();
-
   private continuesWord = false;
+  /** Ligature characters seen inside words: the font breaks ligatures. */
+  brokenLigatures = 0;
 
   constructor(readonly dictionary: Dictionary | null = null) {}
 
@@ -31,9 +32,6 @@ export class Lexicon {
    * Feed every line's text in reading order. Word halves split by a line-end
    * hyphen ("fre-" and the next line's "quently") are not counted as words.
    */
-  /** Ligature characters seen inside words: the font breaks ligatures. */
-  brokenLigatures = 0;
-
   addLine(text: string) {
     this.brokenLigatures += (text.match(/\p{Ll}[!"#$%]\p{Ll}/gu) ?? []).length;
     const tokens = text.match(/\p{L}+(?:-\p{L}+)*-?/gu) ?? [];
@@ -47,13 +45,13 @@ export class Lexicon {
     });
   }
 
-  /** `midSentence`: the left part does not start a sentence. */
   /** A word this document uses, or one in the dictionary. */
   knows(word: string): boolean {
     const key = word.toLowerCase();
     return (this.words.get(key) ?? 0) > 0 || (this.dictionary?.has(key) ?? false);
   }
 
+  /** `midSentence`: the left part does not start a sentence. */
   decide(left: string, rightPart: string, midSentence = true): 'join' | 'keep' {
     const joined = (left + rightPart).toLowerCase();
     const hyphenated = `${left}-${rightPart}`.toLowerCase();
@@ -87,7 +85,6 @@ export class Lexicon {
   }
 }
 
-/** How to join `next` (a new line) onto `seq` (the text so far). */
 /**
  * Some fonts map the ff, fi, fl, ffi and ffl ligatures to "!", '"', "#",
  * "$" and "%" ("e!ectively", "speci"c", "e#ciency", "re$ective"), and not
@@ -123,6 +120,7 @@ export function repairLigatures(word: string, lexicon: Lexicon): string {
   return word;
 }
 
+/** How to join `next` (a new line) onto `seq` (the text so far). */
 export function lineJoin(seq: SpokenChar[], next: SpokenChar[], lexicon: Lexicon): JoinDecision {
   const last = seq[seq.length - 1]?.ch;
   if (!last || !HYPHENS.has(last)) return 'space';
@@ -134,14 +132,12 @@ export function lineJoin(seq: SpokenChar[], next: SpokenChar[], lexicon: Lexicon
   let i = seq.length - 2;
   const inWord = (k: number) => LETTER.test(seq[k].ch) || (BROKEN.test(seq[k].ch) && k > 0 && LETTER.test(seq[k - 1].ch));
   while (i >= 0 && (inWord(i) || (seq[i].ch === '-' && i > 0 && LETTER.test(seq[i - 1].ch)))) i--;
-  let left = seq
-    .slice(i + 1, seq.length - 1)
-    .map((c) => c.ch)
-    .join('');
-  const rightPart = (next.map((c) => c.ch).join('').match(/^\p{L}+/u) ?? [''])[0];
+  let left = seqText(seq.slice(i + 1, seq.length - 1));
+  const nextText = seqText(next);
+  const rightPart = (nextText.match(/^\p{L}+/u) ?? [''])[0];
   // A broken ligature on either side ("e!ec-" + "tively", "identi-" + '"es'):
   // decide on the repaired word, if it is one.
-  const rightRaw = (next.map((c) => c.ch).join('').match(/^[\p{L}!"#$%]+/u) ?? [''])[0];
+  const rightRaw = (nextText.match(/^[\p{L}!"#$%]+/u) ?? [''])[0];
   if (BROKEN.test(left + rightRaw)) {
     // One word once repaired: join it.
     if (repairLigatures(left + rightRaw, lexicon) !== left + rightRaw) return 'join';
@@ -150,11 +146,7 @@ export function lineJoin(seq: SpokenChar[], next: SpokenChar[], lexicon: Lexicon
 
   // "COVID-" + "19", "Type-" + "B": an upper-case or numeric start keeps it.
   if (!rightPart || !/^\p{Ll}/u.test(rightPart)) return 'keep';
-  const preceding = seq
-    .slice(Math.max(0, i - 8), i + 1)
-    .map((c) => c.ch)
-    .join('')
-    .trimEnd();
-  const midSentence = preceding.length > 0 && !/[.!?:]["'”’)\]]?$/.test(preceding);
+  const preceding = seqText(seq.slice(Math.max(0, i - 8), i + 1)).trimEnd();
+  const midSentence = preceding.length > 0 && !ENDS_SENTENCE.test(preceding);
   return lexicon.decide(left, rightPart, midSentence);
 }

@@ -33,13 +33,12 @@ export function findMarginLines(pages: MarginPage[]): Set<Line> {
       const bottomRow = Math.abs(line.baseline - lastRow) < 2 && line.box.y > p.height * (1 - EDGE_ROW_MARGIN);
       const inTop = bottom(line.box) < p.height * REPEAT_MARGIN;
       const inBottom = line.box.y > p.height * (1 - REPEAT_MARGIN);
-      const text0 = lineText(line).trim();
+      const text = lineText(line).trim();
       const nearEdge = bottom(line.box) < p.height * NUMBER_MARGIN || line.box.y > p.height * (1 - NUMBER_MARGIN);
-      const number = (nearEdge || topRow || bottomRow) && /^\d{1,4}$/.test(text0) ? Number(text0) : null;
+      const number = (nearEdge || topRow || bottomRow) && /^\d{1,4}$/.test(text) ? Number(text) : null;
       if (!inTop && !inBottom && !topRow && !bottomRow && number === null) continue;
       const outer = bottom(line.box) < p.height * MARGIN || line.box.y > p.height * (1 - MARGIN);
       const edge = !inTop && !inBottom;
-      const text = lineText(line).trim();
       const key = (inTop || topRow ? 'T:' : 'B:') + text.toLowerCase().replace(/\d+/g, '#').replace(/\s+/g, ' ');
       candidates.push({ line, key, page: p.page, text, outer, edge, number });
     }
@@ -47,8 +46,9 @@ export function findMarginLines(pages: MarginPage[]): Set<Line> {
 
   const pagesByKey = new Map<string, Set<number>>();
   for (const c of candidates) {
-    if (!pagesByKey.has(c.key)) pagesByKey.set(c.key, new Set());
-    pagesByKey.get(c.key)!.add(c.page);
+    let pagesOf = pagesByKey.get(c.key);
+    if (!pagesOf) pagesByKey.set(c.key, (pagesOf = new Set()));
+    pagesOf.add(c.page);
   }
 
   // Page numbers further in (ACM puts them well above the bottom edge) count

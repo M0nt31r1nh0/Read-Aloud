@@ -6,7 +6,7 @@ import { dropHiddenText } from './hidden';
 import { buildLines } from './lines';
 import { findMarginLines } from './margins';
 import { CAPTION_START, buildUnits, isCaptionLine } from './units';
-import { lineText } from './text';
+import { ENDS_SENTENCE, lineText } from './text';
 import { DEFAULT_OPTIONS, type AnalyzeOptions, type Block, type Line, type PageLayout, type Rect, type ReadingUnit, type Rule } from './types';
 
 export interface DocumentAnalysis {
@@ -33,7 +33,7 @@ export function analyzeDocument(
     const { ordered, blocks } = orderLines(kept, p.page, bodyFontSize);
     markInTextMentions(ordered);
     markFigureText(ordered, blocks, bodyFontSize);
-    markFootnotes(ordered, bodyFontSize, p.height, blocks, p.rules ?? []);
+    markFootnotes(ordered, bodyFontSize, p.height, blocks, p.rules);
     const skipped = (l: Line) => l.role === 'figure' || (l.role === 'table' && options.skipTables);
     const read = ordered.filter((l) => !skipped(l));
     return {
@@ -43,7 +43,7 @@ export function analyzeDocument(
       lines: [...read.filter((l) => l.role !== 'footnote'), ...read.filter((l) => l.role === 'footnote')],
       blocks,
       dropped: [...p.lines.filter((l) => dropped.has(l)), ...ordered.filter(skipped)],
-      rules: p.rules ?? [],
+      rules: p.rules,
     };
   });
 
@@ -85,7 +85,7 @@ function markInTextMentions(ordered: Line[]) {
       line.baseline - prev.baseline <= 1.6 * line.fontSize &&
       line.box.x <= prev.box.x + 0.5 * line.fontSize &&
       isProse(prevText) &&
-      !/[.!?:]["'”’)\]]?$/.test(prevText);
+      !ENDS_SENTENCE.test(prevText);
   });
 }
 
@@ -138,7 +138,7 @@ const STOP_WORDS = new Set(
 );
 
 /** Prose: at least four words, mostly letters, and at least one common small word. */
-export function isProse(text: string): boolean {
+function isProse(text: string): boolean {
   const words = text.toLowerCase().match(/\p{L}+/gu) ?? [];
   const letters = text.replace(/[^\p{L}]/gu, '').length;
   return words.length >= 4 && letters >= 0.5 * text.replace(/\s/g, '').length && words.some((w) => STOP_WORDS.has(w));
@@ -160,7 +160,8 @@ function markFigureText(lines: Line[], blocks: Block[], bodyFont: number) {
   // rows, many short cells), and so is the widest block (a table split into
   // sub-columns can be wider than the text columns).
   const proseCount = new Map<number, number>();
-  for (const l of lines) if (bodySize(l) && isProse(text.get(l)!)) proseCount.set(l.block ?? 0, (proseCount.get(l.block ?? 0) ?? 0) + 1);
+  const prose = (l: Line) => isProse(text.get(l)!);
+  for (const l of lines) if (bodySize(l) && prose(l)) proseCount.set(l.block ?? 0, (proseCount.get(l.block ?? 0) ?? 0) + 1);
   const textBlock = [...proseCount.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
   const columnWidth = textBlock !== undefined ? blocks[textBlock].box.w : Math.max(0, ...blocks.map((b) => b.box.w));
   // Other cells on the same row within the same column (or full-width area).
@@ -178,7 +179,6 @@ function markFigureText(lines: Line[], blocks: Block[], bodyFont: number) {
   // Body text is prose: several words including common small ones. Table
   // rows (numbers) and diagram label rows ("Vision Encoder Projector LLM")
   // can be just as wide but are not.
-  const prose = (l: Line) => isProse(text.get(l)!);
   const bodyLike = (l: Line, area: Rect) =>
     bodySize(l) && prose(l) && (l.box.w >= 0.95 * columnWidth || (l.box.w >= 0.75 * columnWidth && !hasRowmates(l, area)));
   // The short last line of a paragraph next to a figure: starts at the
@@ -196,7 +196,7 @@ function markFigureText(lines: Line[], blocks: Block[], bodyFont: number) {
       const headText = text.get(head)!;
       const close = rest.box.x - right(head.box) <= 2 * l.fontSize;
       const short = /^\p{Lu}/u.test(headText) && /\.$/.test(headText) && headText.split(/\s+/).length <= 6;
-      if (close && short && isProse(text.get(rest)!) && right(rest.box) - head.box.x >= 0.9 * columnWidth) return true;
+      if (close && short && prose(rest) && right(rest.box) - head.box.x >= 0.9 * columnWidth) return true;
     }
     return false;
   };

@@ -18,11 +18,19 @@ export function countWords(text: string): number {
   return text.match(WORD)?.length ?? 0;
 }
 
+/** Each unit's word count: the estimate is updated at every sentence. */
+const unitWords = new WeakMap<ReadingUnit, number>();
+function wordsIn(unit: ReadingUnit): number {
+  let words = unitWords.get(unit);
+  if (words === undefined) unitWords.set(unit, (words = countWords(unit.text)));
+  return words;
+}
+
 /** Words from `from` to the end of the document. */
 export function wordsLeft(units: ReadingUnit[], from: Position): number {
   let words = 0;
   units.forEach((unit, i) => {
-    if (i > from.unit) words += countWords(unit.text);
+    if (i > from.unit) words += wordsIn(unit);
     else if (i === from.unit) words += countWords(unit.text.slice(from.char));
   });
   return words;

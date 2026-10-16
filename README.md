@@ -97,7 +97,7 @@ app.
 | Start | `npm start` | `npm run dev` |
 | Address | **http://localhost:4173** | http://localhost:5173 |
 | Runs | the last deployed version | the source as it is being edited, reloading on every change |
-| Label in the toolbar | `Version 20261014-140655` | `Development` (orange) |
+| Badge in the top bar | `Version 20261014-140655` | `Development` (orange) |
 
 Both can run at the same time. To publish what is in development to the
 stable app:
@@ -127,9 +127,7 @@ Each check offers the newest version: a pop-up still on screen is replaced,
 never stacked. Versions from the last 7 days (and always the last five) are
 kept, so a tab still running an older one keeps working. If a tab's version
 has been removed, its pop-up says so and offers only **Update now** (your PDF
-and position are still kept). Restart `npm start` after updating the project
-so the stable server can tell tabs which versions it still has. `deploy/` is
-not committed.
+and position are still kept). `deploy/` is not committed.
 
 ---
 
@@ -139,7 +137,8 @@ not committed.
 2. Press **Play**, or click any word on the page to start reading from it.
 3. The current sentence is shaded and the current word highlighted, both on
    the page and in the **Reading order** list on the right (below the page on
-   narrow windows). Click a paragraph in that list to jump to it.
+   narrow windows). Click a paragraph in that list to jump to it. The player
+   at the bottom shows how far through the document you are.
 4. While it reads, the page follows the voice. Scroll yourself (wheel,
    trackpad, scrollbar or keys) to look around the paper while reading goes
    on. A button then shows that the page is no longer following:
@@ -149,22 +148,22 @@ not committed.
 
 | Control | Action |
 | --- | --- |
-| **Play / Pause / Resume** | Start, pause and continue reading |
+| **▶ / ⏸** (player, centre) | Start, pause and continue reading |
 | **⏮ / ⏭** | Previous / next sentence (press ⏮ twice to go back a sentence) |
-| **Stop** | Stop reading and clear the highlights |
-| **Speed** | Reading speed, 0.5× to 2× |
-| **Voice** | Any voice installed on your computer |
-| **Page [ 3 ] / 14** | The page you are looking at. Type a page number and press <kbd>Enter</kbd> to go there; <kbd>↑</kbd> / <kbd>↓</kbd> in the field step one page |
-| **≈ 47 min** / **≈ 31 min left** | Estimated reading time at the selected speed: for the whole document, then from the word being read. It counts only what will be read (the filters apply) and measures your voice's speed as it reads, remembering it per voice |
+| **■** | Stop reading and clear the highlights |
+| **Speed** (player, right) | Reading speed, 0.5× to 2× |
+| **Voice** (player, left) | Any voice installed on your computer |
+| **47%** ━━ **≈ 31 min left** | How far through the document you are, and the estimated reading time at the selected speed: for the whole document, then from the word being read. It counts only what will be read (the filters apply) and measures your voice's speed as it reads, remembering it per voice |
+| **‹ [ 3 ] / 14 ›** (top bar) | The page you are looking at. The arrows go to the previous / next page; type a page number and press <kbd>Enter</kbd> to go there; <kbd>↑</kbd> / <kbd>↓</kbd> in the field step one page |
 | **− [ 100 ] % + Fit** | Zoom out / in, or type a zoom (25–400) and press <kbd>Enter</kbd>; **Fit** fits the page to the window width. The zoom is remembered |
 | <kbd>Ctrl</kbd> (<kbd>⌘</kbd> on a Mac) + <kbd>+</kbd> / <kbd>−</kbd> / <kbd>0</kbd> | Zoom in / out / fit to width |
 | Pinch, or <kbd>Ctrl</kbd> + scroll | Zoom around the pointer |
-
-The page and zoom fields take numbers only: other characters, typed or
-pasted, are dropped, and values out of range are brought into range.
 | <kbd>Space</kbd> | Play / pause |
 | <kbd>←</kbd> / <kbd>→</kbd> | Previous / next sentence |
 | <kbd>Esc</kbd> | Close the Filters menu |
+
+The page and zoom fields take numbers only: other characters, typed or
+pasted, are dropped, and values out of range are brought into range.
 
 Speed, voice, filters and zoom are remembered in your browser as you change
 them, so they stay the same after an update and the next time you open the
@@ -176,13 +175,13 @@ Open **Filters** in the top bar. Changes apply immediately.
 
 | Option | Default | Effect |
 | --- | --- | --- |
-| Show layout | off | Draws the detected columns, reading order (§1, §2 …), skipped headers and figure/table text on the page |
-| Skip citations | on | Skips reference numbers: `[3]`, `[3,2,1,44,55]`, `[4–9, 12]`, `[3; 5]`, `[3]–[5]`, `[Smi20, Doe21]`, even when broken across lines. Intervals such as `[0, 1]` are kept. |
-| Skip captions | off | Skips "Figure N: …" and "Table N: …" captions |
-| Skip tables | on | Skips table cells. When off, a table is read after its caption, row by row with its column names |
-| Expand abbreviations | on | "Fig. 2" → "Figure 2", "§4.1" → "Section 4.1", "e.g." → "for example", URLs → "link to example.com", ✗ → "cross" |
-| Read footnotes | on | Reads footnotes after the paragraph they interrupt |
-| Read equations as text | off | Display maths is announced as "equation 3" unless this is on |
+| Skip › Citations | on | Skips reference numbers: `[3]`, `[3,2,1,44,55]`, `[4–9, 12]`, `[3; 5]`, `[3]–[5]`, `[Smi20, Doe21]`, even when broken across lines, and author-year citations such as "(Smith et al., 2020; Lee, 2021)". Intervals such as `[0, 1]` are kept. |
+| Skip › Captions | off | Skips "Figure N: …" and "Table N: …" captions |
+| Skip › Tables | on | Skips table cells. When off, a table is read after its caption, row by row with its column names |
+| Read › Expand abbreviations | on | "Fig. 2" → "Figure 2", "§4.1" → "Section 4.1", "e.g." → "for example", URLs → "link to example.com", ✗ → "cross" |
+| Read › Footnotes | on | Reads footnotes after the paragraph they interrupt |
+| Read › Equations as text | off | Display maths is announced as "equation 3" unless this is on |
+| Display › Show layout | off | Draws the detected columns, reading order (§1, §2 …), skipped headers and figure/table text on the page |
 
 ### Voices
 
@@ -206,7 +205,7 @@ The app is a static website, so it can be hosted anywhere that serves files
 
 ```bash
 npm run build      # writes the site to dist/
-npm run preview    # serves dist/ at http://localhost:4173 to check it
+npm run preview    # serves dist/ to check it (the address is printed)
 ```
 
 Upload the contents of `dist/`. If the site will live in a sub-folder (for
@@ -238,8 +237,9 @@ git remote add origin https://github.com/<your-username>/<your-repository>.git
 git push -u origin main
 ```
 
-`.gitignore` keeps out `node_modules/`, `dist/`, the generated dictionary and
-anything in `test/local/` (put your own PDFs there for testing). Each push
+`.gitignore` keeps out `node_modules/`, `dist/`, `deploy/`, the generated
+dictionary and anything in `test/local/` (put your own PDFs there for
+testing). Each push
 runs the tests and the build on **Windows, macOS and Linux** with GitHub
 Actions (`.github/workflows/ci.yml`); the results are on the repository's
 **Actions** tab.
@@ -267,12 +267,15 @@ On Windows, quote paths that contain spaces:
 ### Project structure
 
 ```
-index.html              page and toolbar
+index.html              page, top bar and player
 src/
-  ui/                   app: rendering, highlighting, controls (main.ts)
+  ui/                   app: rendering and controls (main.ts), highlight boxes,
+                        update pop-up and the session kept across updates
   speech/reader.ts      speaks one sentence at a time, maps word boundaries to the page
+  speech/estimate.ts    reading-time estimate, learning each voice's speed
   engine/               PDF → reading units; plain TypeScript, no DOM
-scripts/                dictionary build, test-paper generator, inspect/audit tools
+scripts/                stable server and deploy, dictionary build,
+                        test-paper generator, inspect/audit tools
 test/                   tests (Vitest) and the generated test paper
 ```
 
@@ -283,7 +286,8 @@ a browser extension or on a server.
 
 | Step | File | What it does |
 | --- | --- | --- |
-| Extract | `extract.ts` | pdf.js text items → fragments in top-left page space, with one box per character (glyph widths measured with a canvas, scaled to the run's real width). Also reads the page's drawn ruling lines for tables. Rotated text such as arXiv margin stamps is skipped. |
+| Extract | `extract.ts`, `glyphs.ts` | pdf.js text items → fragments in top-left page space, with one box per character (glyph widths measured with a canvas, scaled to the run's real width). Characters a font's table maps wrongly ("fl" as `$`, maths letters in order) are corrected from the glyph names. Also reads the page's drawn ruling lines for tables. Rotated text such as arXiv margin stamps is skipped. |
+| Hidden text | `hidden.ts` | Drops text the PDF contains but does not show: small text printed over larger text, runs squeezed between two lines, and clipped-away copies of a figure. |
 | Lines | `lines.ts` | Groups fragments by baseline and splits a row wherever the gap is wider than a word space (0.8 em), so a line never crosses a column gutter. Small raised/lowered runs are attached to their line as super/subscripts (two passes, for nested indices); rows split by such a mark, and section numbers set a quad from their title, are rejoined. Inline stacked fractions are read "a over b". |
 | Margins | `margins.ts` | Drops running headers/footers (same text in the top/bottom margin on 2+ pages) and page numbers. |
 | Columns | `columns.ts` | Cuts the page into horizontal slabs at vertical white space, finds gutters in each slab, and re-joins neighbouring slabs that do not bridge the gutter into one column region. Columns are read left to right, full-width blocks top to bottom, rows by baseline then x. The re-join step avoids the classic XY-cut error where paragraph breaks that line up in both columns make the reader zig-zag. |
@@ -291,7 +295,7 @@ a browser extension or on a server.
 | Tables | `tables.ts` | Rebuilds a grid of cells, then reads it with headers. Bordered tables use the drawn ruling lines: a line's cell is the box of the nearest borders around it, so multi-line cells merge and spanning headers/labels span. Tables with horizontal rules only find columns from vertical white space, the header from the rule under it, and rows from row labels (wrapped cell text joins the label nearest it, whether labels are at the top of the row or centred). |
 | Units | `units.ts` | Builds paragraphs from font changes, vertical gaps, first-line indents (told apart from hanging indents) and short last lines. Paragraphs continue across columns, pages and figures. Captions, tables and footnotes are read after the paragraph they interrupted. Numbered headings are told apart from list items; reference entries stay whole and are read "12. Author…". Display maths is read as "equation 3" inside its sentence. |
 | Hyphens | `hyphenation.ts`, `dictionary.ts` | Decides each line-end hyphen. The document wins first (`two-column` or `datacenter` written elsewhere); then an English dictionary: join if the joined form is a word (`fre-quently`), keep if both halves are words but the whole is not (`general-purpose`). Also kept: existing compounds (`state-of-the-art`), acronyms (`GPU-based`), capitals/digits after the hyphen (`COVID-19`), prefixes like `self-`. Capitalised words inside a sentence are names and are joined (`Bren-don`). |
-| Speech text | `units.ts`, `text.ts` | Ligatures are normalised, the broken "Th" ligature some publishers emit as `+` ("+e") is repaired, superscript marks and citations are skipped, subscripts are read as separate words ("GPU j"), and abbreviations, symbols and URLs are made speakable. |
+| Speech text | `units.ts`, `text.ts` | Ligatures are normalised, the broken "Th" ligature some publishers emit as `+` ("+e") and ff/fi/fl ligatures emitted as punctuation ("e!ectively") are repaired, superscript marks and citations are skipped, subscripts are read as separate words ("GPU j"), and abbreviations, symbols and URLs are made speakable. |
 | Sentences | `sentences.ts` | `Intl.Segmenter` plus guards for `et al.`, initials, `Dr.` and similar; very long sentences are split at `;`/`,`. |
 
 Every spoken character keeps the page box it came from, including words
