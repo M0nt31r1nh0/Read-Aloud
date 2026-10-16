@@ -808,7 +808,31 @@ const filtersPanel = $<HTMLDivElement>('filters-panel');
 const setFiltersOpen = (open: boolean) => {
   filtersPanel.hidden = !open;
   filtersButton.setAttribute('aria-expanded', String(open));
+  if (open) placeFiltersPanel();
 };
+
+/**
+ * Keep the dropdown on screen: it opens under its button, but moves left when
+ * the button sits near the right edge (a wrapped toolbar), and scrolls inside
+ * itself when the window is too short.
+ */
+function placeFiltersPanel() {
+  const margin = 8;
+  Object.assign(filtersPanel.style, { left: '0px', top: '', bottom: '', maxHeight: '' });
+  const r = filtersPanel.getBoundingClientRect();
+  const overflow = r.right - (window.innerWidth - margin);
+  if (overflow > 0) filtersPanel.style.left = `${-Math.min(overflow, r.left - margin)}px`;
+  // Below the button if it fits (or if there is more room below), else above.
+  const button = filtersButton.getBoundingClientRect();
+  const below = window.innerHeight - r.top - margin;
+  const above = button.top - 6 - margin;
+  if (r.height > below && above > below) {
+    Object.assign(filtersPanel.style, { top: 'auto', bottom: 'calc(100% + 6px)', maxHeight: `${above}px` });
+  } else {
+    filtersPanel.style.maxHeight = `${below}px`;
+  }
+}
+window.addEventListener('resize', () => !filtersPanel.hidden && placeFiltersPanel());
 filtersButton.addEventListener('click', () => setFiltersOpen(filtersPanel.hidden !== false));
 // A click outside only closes the dropdown; it does not also start reading
 // at the word under it (captured before the page's own click handlers).
