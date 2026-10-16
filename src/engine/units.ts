@@ -26,6 +26,28 @@ const NUMBERED_HEADING = /^(?:[1-9]\d?(?:\.\d{1,2}){0,3}\.?|[IVX]+\.|[A-H](?:\.\
 const ENDS_SENTENCE = /[.!?:]["'”’)\]]?$/;
 // A bracket group, optionally a range of two groups ("[3]–[5]").
 export const CITATION_PATTERN = /\s*\[([^[\]]{1,120})\](?:\s*[–-]\s*\[([^[\]]{1,120})\])?/g;
+/**
+ * Author-year citations: "(Ismail et al., 2025; Knerler et al., 2022)",
+ * "(Tilbury & Flowerday, 2024b)", "(de Gibert et al., 2018)", "(Yao et al.
+ * 2024)", "(e.g., Smith, 2020)", "[Weng et al., 2022]". Names may have
+ * accents, hyphens and particles ("van der", "de"); years may repeat
+ * ("2020, 2021") and carry a letter ("2023b").
+ */
+const NAME = String.raw`(?:(?:van|von|de|der|den|del|da|di|du|le|la|dos)\s+)*\p{Lu}[\p{L}'’-]+(?:\s+(?:(?:van|von|de|der|den|del|da|di|du|le|la|dos)\s+)*\p{Lu}[\p{L}'’-]+)?`;
+const YEARS = String.raw`(?:19|20)\d\d[a-z]?(?:\s*,\s*(?:19|20)\d\d[a-z]?)*`;
+const AUTHOR_YEAR = String.raw`(?:(?:e\.g\.|i\.e\.|see|cf\.)\s*,?\s*)?${NAME}(?:\s*(?:,|&|and)\s*${NAME})*(?:\s+et\s+al\.?)?,?\s+${YEARS}`;
+export const AUTHOR_YEAR_PATTERN = new RegExp(String.raw`\s*[(\[]${AUTHOR_YEAR}(?:\s*;\s*${AUTHOR_YEAR})*[)\]]`, 'gu');
+/** The year after a name in the sentence: "Hinton et al. (2015) emerged". */
+export const NARRATIVE_YEAR_PATTERN = new RegExp(String.raw`(?<=(?:et al\.|\p{Lu}[\p{L}'’-]+))\s*\(${YEARS}\)`, 'gu');
+/** Dates and venues look like author-year citations but are not. */
+export function isAuthorYearCitation(match: string): boolean {
+  const first = match.replace(/^\s*[(\[]\s*(?:(?:e\.g\.|i\.e\.|see|cf\.)\s*,?\s*)?/, '');
+  if (/^(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sept?|Oct|Nov|Dec|Spring|Summer|Autumn|Fall|Winter)\b/.test(first)) return false;
+  // "(ICML 2024)": an acronym on its own is a venue, not an author.
+  if (/^\p{Lu}{2,}[\s,]/u.test(first) && !/et al/.test(match) && !/;/.test(match)) return false;
+  return true;
+}
+
 const CITATION_ITEM = /^(?:[1-9]\d{0,3}(?:\s*[–-]\s*[1-9]\d{0,3})?|[A-Z][A-Za-z+]{1,7}\d{2,4}[a-z]?)$/;
 const REFERENCE_LABEL = /^\[\d+\](?:\s|$)/;
 const BIBLIOGRAPHY = /^(?:\d+\.?\s*)?(?:references|bibliography|works cited|literature cited)$/i;
@@ -132,6 +154,8 @@ type Item = { line: Line } | { math: Line[] } | { table: Line[] };
 interface Open {
   items: Item[];
   kind: UnitKind;
+  /** A reference list entry: its years are not citations. */
+  inBibliography?: boolean;
 }
 
 interface Placed {
@@ -169,9 +193,9 @@ export function buildUnits(
 
   const rulesOf = new Map(pages.map((p) => [p.page, p.rules]));
   const units: ReadingUnit[] = [];
-  const emit = (items: Item[], kind: UnitKind) => {
+  const emit = (items: Item[], kind: UnitKind, inBibliography = false) => {
     if (kind === 'caption' && options.skipCaptions) return;
-    const unit = makeUnit(units.length, items, kind, lexicon, options, (page) => rulesOf.get(page) ?? []);
+    const unit = makeUnit(units.length, items, kind, lexicon, options, (page) => rulesOf.get(page) ?? [], inBibliography);
     // A fragment without a single letter ("2", "(1)", "0.60", "!") is a stray
     // mark, tick label or equation number; read alone it means nothing.
     if (unit.text && /\p{L}/u.test(unit.text)) units.push(unit);
@@ -191,7 +215,7 @@ export function buildUnits(
   const footnotes: Line[] = [];
 
   const close = () => {
-    if (current) emit(current.items, current.kind);
+    if (current) emit(current.items, current.kind, current.inBibliography);
     current = null;
     afterMath = false;
     for (const a of deferred.splice(0)) emit(a.items, a.kind);
@@ -227,7 +251,9 @@ export function buildUnits(
   };
 
   stream.forEach((s, i) => {
-    if (s.line.role === 'footnote') {
+    // In the reference list, small text low on the page is entries, not
+    // footnotes, unless it is under the footnote rule.
+    if (s.line.role === 'footnote' && (!inBibliography || s.line.underFootnoteRule)) {
       footnotes.push(s.line);
       return;
     }
@@ -257,7 +283,8 @@ export function buildUnits(
       prev = s;
       return;
     }
-    const heading = isHeading(stream, i, bodyFont, pitch, bodyFontName);
+    // "References" on its own line is a heading even in body-size type.
+    const heading = isHeading(stream, i, bodyFont, pitch, bodyFontName) || BIBLIOGRAPHY.test(s.text.trim());
     const caption = isCaptionLine(s.line, s.text);
     if (heading) inBibliography = BIBLIOGRAPHY.test(s.text.trim());
 
@@ -300,7 +327,7 @@ export function buildUnits(
       }
       if (breaks) close();
     }
-    current ??= { items: [], kind: heading ? 'heading' : 'paragraph' };
+    current ??= { items: [], kind: heading ? 'heading' : 'paragraph', inBibliography };
     current.items.push({ line: s.line });
     prev = s;
     interrupted = false;
@@ -484,6 +511,7 @@ function makeUnit(
   lexicon: Lexicon,
   options: AnalyzeOptions,
   rulesOf: (page: number) => Rule[],
+  inBibliography = false,
 ): ReadingUnit {
   let seq: SpokenChar[] = [];
   let afterMath = false;
@@ -531,7 +559,16 @@ function makeUnit(
   for (const [re, rep] of LIST_MARKERS) seq = replaceAll(seq, re, rep);
   // A reference list entry: "[12] Author…" is read "12. Author…".
   seq = replaceAll(seq, /^\[(\d+)\]\s*/g, (m) => `${m.match(/\d+/)![0]}. `);
-  if (options.skipCitations) seq = replaceAll(seq, CITATION_PATTERN, (m) => (isCitation(m) ? '' : m));
+  if (options.skipCitations) {
+    seq = replaceAll(seq, CITATION_PATTERN, (m) => (isCitation(m) ? '' : m));
+    // In the reference list, "(2022)" after a venue is its year, not a citation.
+    if (!inBibliography) {
+      seq = replaceAll(seq, AUTHOR_YEAR_PATTERN, (m) => (isAuthorYearCitation(m) ? '' : m));
+      // "Hinton et al. (2015)." would leave "al.." behind.
+      seq = replaceAll(seq, NARRATIVE_YEAR_PATTERN, '');
+      seq = replaceAll(seq, /(?<=\bal\.)\./g, '');
+    }
+  }
   if (options.expandAbbreviations) for (const [re, rep] of ABBREVIATIONS) seq = replaceAll(seq, re, rep);
   seq = collapseSpaces(seq);
 

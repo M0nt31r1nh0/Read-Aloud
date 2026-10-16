@@ -115,7 +115,10 @@ function markFootnotes(ordered: Line[], bodyFont: number, pageHeight: number, bl
     if (!first || first.box.y - rule.y0 > 2 * bodyFont) continue;
     const marked = first.fragments[0]?.script === 'super' || /^[\d*∗†‡§¶]/.test(lineText(first).trim()) || first.fontSize <= 0.88 * bodyFont;
     if (!marked || below.some((l) => l.fontSize > 1.05 * bodyFont)) continue;
-    for (const line of below) line.role = 'footnote';
+    for (const line of below) {
+      line.role = 'footnote';
+      line.underFootnoteRule = true;
+    }
   }
   for (const line of ordered) {
     if (line.role || line.fontSize > 0.88 * bodyFont || line.box.y < 0.6 * pageHeight) continue;

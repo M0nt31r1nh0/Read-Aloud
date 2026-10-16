@@ -3,7 +3,7 @@ import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { Lexicon, lineJoin } from '../src/engine/hyphenation';
 import { splitSentences } from '../src/engine/sentences';
 import { replaceAll, type SpokenChar } from '../src/engine/text';
-import { CITATION_PATTERN, isCitation } from '../src/engine/units';
+import { AUTHOR_YEAR_PATTERN, CITATION_PATTERN, NARRATIVE_YEAR_PATTERN, isAuthorYearCitation, isCitation } from '../src/engine/units';
 import { DEFAULT_OPTIONS, extractPage } from '../src/engine';
 // @ts-expect-error plain JS fixture script
 import { buildFixturePdf } from '../scripts/make-fixture.mjs';
@@ -117,6 +117,52 @@ describe('citations', () => {
     'keeps %j',
     (input) => expect(strip(input)).toBe(input),
   );
+});
+
+describe('author-year citations', () => {
+  const strip = (text: string) => {
+    let seq = replaceAll(chars(text), AUTHOR_YEAR_PATTERN, (m) => (isAuthorYearCitation(m) ? '' : m));
+    seq = replaceAll(seq, NARRATIVE_YEAR_PATTERN, '');
+    return seq.map((c) => c.ch).join('');
+  };
+
+  it.each([
+    ['organisational defence (Ismail et al., 2025; Knerler et al., 2022; Singh et al., 2024). At', 'organisational defence. At'],
+    ['ever since (Baruwal Chhetri et al., 2024; Jalalvand et al., 2024). As', 'ever since. As'],
+    ['in various forms (Tilbury & Flowerday, 2024b). At', 'in various forms. At'],
+    ['labels (de Gibert et al., 2018).', 'labels.'],
+    ['edge deployment (Yao et al. 2024; Rang et al. 2025), enabling', 'edge deployment, enabling'],
+    ['caching (Ramírez et al., 2023; Stogiannidis et al., 2023).', 'caching.'],
+    ['as before (e.g., Smith and Jones, 2020, 2021).', 'as before.'],
+    ['explored in various works [Weng et al., 2022; Jiang et al., 2023].', 'explored in various works.'],
+    ['using an API (OpenAI, 2023).', 'using an API.'],
+    ['conceptualized by Hinton et al. (2015), emerged', 'conceptualized by Hinton et al., emerged'],
+    ['Varshney & Baral (2022) systematically examines', 'Varshney & Baral systematically examines'],
+  ])('removes %j', (input, expected) => expect(strip(input)).toBe(expected));
+
+  it('keeps years in the reference list, and its entries low on the page are not footnotes', async () => {
+    const { analyzeDocument } = await import('../src/engine');
+    const run = (text: string, y: number, fontSize = 10) => ({
+      page: 0, text, x: 72, top: y, width: text.length * 0.5 * fontSize, height: fontSize, baseline: y + 0.8 * fontSize, fontSize, fontName: 'f',
+      chars: [...text].map((_, i) => ({ x: 72 + 0.5 * fontSize * i, y, w: 0.5 * fontSize, h: fontSize })),
+    });
+    const body = Array.from({ length: 8 }, (_, i) => run(i ? 'and the results improve on the baseline in every one of the settings.' : 'As shown before (Smith et al., 2020; Doe, 2021), this works well.', 100 + 12 * i));
+    const refs = ['Ada Lovelace. Notes on the engine. ICML (2021).', 'Alan Turing. On computable numbers. NeurIPS (2017).'].map((t, i) => run(t, 600 + 12 * i, 8));
+    const page = { page: 0, width: 612, height: 792, rules: [], fragments: [...body, run('References', 560, 12), ...refs] };
+    const units = analyzeDocument([page]).units.map((u) => `${u.kind}: ${u.text}`);
+    expect(units[0]).toMatch(/^paragraph: As shown before, this works well\. and/);
+    expect(units.join(' ')).toContain('ICML (2021).');
+    expect(units.join(' ')).toContain('NeurIPS (2017).');
+    expect(units.some((u) => u.startsWith('footnote'))).toBe(false);
+  });
+
+  it.each([
+    ['the survey (May 2023) found'],
+    ['published at a venue (ICML 2024) last year'],
+    ['the model (GPT-4, 2023) is used'],
+    ['values (0.5, 2020) are kept'],
+    ['in Section 4 (2020 data) we'],
+  ])('keeps %j', (input) => expect(strip(input)).toBe(input));
 });
 
 describe('text edits keep page boxes', () => {
