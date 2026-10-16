@@ -172,7 +172,7 @@ app.
 
 ### Filters
 
-Open **Filters ▾** in the toolbar. Changes apply immediately.
+Open **Filters** in the top bar. Changes apply immediately.
 
 | Option | Default | Effect |
 | --- | --- | --- |

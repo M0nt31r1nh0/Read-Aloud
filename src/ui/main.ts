@@ -24,6 +24,7 @@ const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as 
 const pagesEl = $<HTMLElement>('pages');
 const transcriptEl = $<HTMLElement>('transcript');
 const statusEl = $<HTMLElement>('status');
+const docTitleEl = $<HTMLElement>('doc-title');
 const playBtn = $<HTMLButtonElement>('play');
 const voiceSelect = $<HTMLSelectElement>('voice');
 const rateInput = $<HTMLInputElement>('rate');
@@ -99,6 +100,8 @@ async function openDocument(data: ArrayBuffer | Uint8Array, name: string) {
   const doc = await pdfjs.getDocument({ data: bytes.slice(), fontExtraProperties: true }).promise;
   if (token !== renderToken) return;
   openFile = { name, data: bytes };
+  docTitleEl.textContent = name;
+  docTitleEl.title = name;
   pagesEl.replaceChildren();
   pagesEl.scrollTop = 0;
   views = [];
@@ -119,7 +122,7 @@ async function openDocument(data: ArrayBuffer | Uint8Array, name: string) {
   await dictionaryReady;
   if (token !== renderToken) return;
   analyze();
-  setStatus(`${name}: ${analysis!.units.length} reading units on ${doc.numPages} page(s). Click any word to start there.`);
+  setStatus(`${analysis!.units.length} reading units · ${doc.numPages} page${doc.numPages === 1 ? '' : 's'} · click any word to start there`);
 }
 
 function createPageView(page: pdfjs.PDFPageProxy, index: number): PageView {
@@ -183,6 +186,9 @@ function createPageView(page: pdfjs.PDFPageProxy, index: number): PageView {
 // ---------- reading time ----------
 
 const readTimeEl = $<HTMLElement>('read-time');
+const progressEl = readTimeEl.parentElement!.querySelector<HTMLElement>('.progress')!;
+const progressFill = $<HTMLElement>('progress-fill');
+const progressLabel = $<HTMLElement>('progress-label');
 const speakingSpeed = new SpeakingSpeed(
   (() => {
     try {
@@ -207,7 +213,13 @@ function updateReadTime() {
   const started = reader.state !== 'idle' || pos.unit > 0 || pos.char > 0;
   const words = wordsLeft(analysis.units, started ? pos : { unit: 0, char: 0 });
   const time = formatDuration(speakingSpeed.minutes(words, voice, rate));
-  readTimeEl.textContent = started ? `· ≈ ${time} left` : `· ≈ ${time}`;
+  readTimeEl.textContent = started ? `≈ ${time} left` : `≈ ${time}`;
+  // How far through the document, by words still to read.
+  const total = wordsLeft(analysis.units, { unit: 0, char: 0 });
+  const percent = total ? Math.round((100 * (total - words)) / total) : 0;
+  progressFill.style.width = `${percent}%`;
+  progressLabel.textContent = `${percent}%`;
+  progressEl.setAttribute('aria-valuenow', String(percent));
   const wpm = Math.round(speakingSpeed.wpm(voice) * rate);
   readTimeEl.title = `About ${words.toLocaleString()} words at ${wpm} words a minute (${voice || 'default voice'}, ${rate.toFixed(1)}×). The speed is measured as the voice reads.`;
 }
@@ -259,8 +271,14 @@ function visiblePage(): number {
   return index < 0 ? views.length - 1 : index;
 }
 
+const pagePrev = $<HTMLButtonElement>('page-prev');
+const pageNext = $<HTMLButtonElement>('page-next');
+
 function updatePageIndicator() {
   pageInput.disabled = views.length === 0;
+  const page = views.length ? visiblePage() : 0;
+  pagePrev.disabled = page <= 0;
+  pageNext.disabled = page >= views.length - 1;
   pageCount.textContent = `/ ${views.length || '–'}`;
   if (document.activeElement !== pageInput) pageInput.value = views.length ? String(visiblePage() + 1) : '';
 }
@@ -277,6 +295,8 @@ function goToPage(number: number) {
 }
 
 numberField(pageInput, goToPage, () => String(visiblePage() + 1));
+pagePrev.addEventListener('click', () => goToPage(visiblePage()));
+pageNext.addEventListener('click', () => goToPage(visiblePage() + 2));
 pageInput.addEventListener('keydown', (e) => {
   // ↑ / ↓ step a page, as in a number field.
   if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
@@ -646,7 +666,9 @@ function renderTranscript() {
     list.append(li);
   });
   const heading = document.createElement('h2');
-  heading.textContent = 'Reading order';
+  const count = document.createElement('small');
+  count.textContent = `${analysis!.units.length} parts`;
+  heading.append('Reading order', count);
   transcriptEl.replaceChildren(heading, list);
 }
 
@@ -683,7 +705,10 @@ function renderLayout() {
 // ---------- controls ----------
 
 function updatePlayButton(state: ReaderState) {
-  playBtn.textContent = state === 'playing' ? 'Pause' : state === 'paused' ? 'Resume' : 'Play';
+  playBtn.dataset.state = state;
+  const label = state === 'playing' ? 'Pause' : state === 'paused' ? 'Resume' : 'Play';
+  playBtn.setAttribute('aria-label', label);
+  playBtn.title = `${label} (Space)`;
   updateReadTime();
   if (state === 'idle') {
     followReading(false);
@@ -797,7 +822,7 @@ for (const id of FILTER_IDS) $(id).addEventListener('change', saveSettings);
 for (const id of ['opt-citations', 'opt-captions', 'opt-tables', 'opt-abbrev', 'opt-footnotes', 'opt-equations']) $(id).addEventListener('change', () => analysis && analyze());
 $('opt-layout').addEventListener('change', renderLayout);
 
-$('open').addEventListener('click', () => $<HTMLInputElement>('file').click());
+for (const id of ['open', 'empty-open']) $(id).addEventListener('click', () => $<HTMLInputElement>('file').click());
 $<HTMLInputElement>('file').addEventListener('change', async (e) => {
   const file = (e.target as HTMLInputElement).files?.[0];
   if (file) await openDocument(await file.arrayBuffer(), file.name).catch(showError);
@@ -853,9 +878,17 @@ document.addEventListener('keydown', (e) => {
     filtersButton.focus();
   }
 });
-document.addEventListener('dragover', (e) => e.preventDefault());
+// While a file is dragged over the window, the empty page shows where to drop it.
+document.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  document.body.classList.add('dragging');
+});
+document.addEventListener('dragleave', (e) => {
+  if (!e.relatedTarget) document.body.classList.remove('dragging');
+});
 document.addEventListener('drop', async (e) => {
   e.preventDefault();
+  document.body.classList.remove('dragging');
   const file = e.dataTransfer?.files[0];
   if (!file) return;
   if (isPdf(file)) await openDocument(await file.arrayBuffer(), file.name).catch(showError);
