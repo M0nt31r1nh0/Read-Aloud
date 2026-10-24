@@ -6,6 +6,7 @@
 //                   (the app polls it)
 //   /r/<id>/…       the files of one release; older releases stay available
 //                   so a tab still running one keeps working
+//   /media/…        pauses other audio while reading (see media.mjs)
 //
 // Usage: npm start [-- --port 4173]
 
@@ -13,6 +14,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { handleMediaRequest } from './media.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const deployDir = path.join(root, 'deploy');
@@ -63,6 +65,7 @@ function sendFile(res, file, cache) {
 }
 
 const server = http.createServer((req, res) => {
+  if (handleMediaRequest(req, res)) return;
   if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, 'Method not allowed');
   let pathname;
   try {

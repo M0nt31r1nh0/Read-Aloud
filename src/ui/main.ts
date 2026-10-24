@@ -16,6 +16,7 @@ import {
 import { SpeakingSpeed, countWords, formatDuration, wordsLeft } from '../speech/estimate';
 import { Reader, type ReaderState } from '../speech/reader';
 import { hitTest, rectsFor } from './highlight';
+import { holdOtherAudio } from './media';
 import { saveSession, takeSession } from './session';
 import { watchForUpdates, type UpdateWatch } from './updates';
 
@@ -723,6 +724,7 @@ function updatePlayButton(state: ReaderState) {
   const label = state === 'playing' ? 'Pause' : state === 'paused' ? 'Resume' : 'Play';
   playBtn.setAttribute('aria-label', label);
   playBtn.title = `${label} (Space)`;
+  updateOtherAudio();
   updateReadTime();
   if (state === 'idle') {
     followReading(false);
@@ -738,7 +740,7 @@ function updatePlayButton(state: ReaderState) {
 // and closing and reopening the app.
 /** The filters that change what is read (the layout view only draws). */
 const ANALYSIS_IDS = ['opt-citations', 'opt-captions', 'opt-tables', 'opt-abbrev', 'opt-footnotes', 'opt-equations'];
-const FILTER_IDS = ['opt-layout', ...ANALYSIS_IDS];
+const FILTER_IDS = ['opt-layout', 'opt-media', ...ANALYSIS_IDS];
 const SETTINGS_KEY = 'read-aloud:settings';
 
 interface Settings {
@@ -851,6 +853,12 @@ if (savedSettings.rate) {
 for (const id of FILTER_IDS) $(id).addEventListener('change', saveSettings);
 for (const id of ANALYSIS_IDS) $(id).addEventListener('change', () => analysis && analyze());
 $('opt-layout').addEventListener('change', renderLayout);
+$('opt-media').addEventListener('change', updateOtherAudio);
+
+/** Other audio is paused while the voice reads, and plays when it pauses or stops. */
+function updateOtherAudio() {
+  holdOtherAudio($<HTMLInputElement>('opt-media').checked && reader.state === 'playing');
+}
 
 for (const id of ['open', 'empty-open']) $(id).addEventListener('click', () => $<HTMLInputElement>('file').click());
 $<HTMLInputElement>('file').addEventListener('change', async (e) => {

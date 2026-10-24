@@ -182,6 +182,27 @@ Open **Filters** in the top bar. Changes apply immediately.
 | Read › Footnotes | on | Reads footnotes after the paragraph they interrupt |
 | Read › Equations as text | off | Display maths is announced as "equation 3" unless this is on |
 | Display › Show layout | off | Draws the detected columns, reading order (§1, §2 …), skipped headers and figure/table text on the page |
+| Other audio › Pause while reading | on | Pauses music or a video playing elsewhere (see below) while the voice reads, and resumes it when you pause or stop |
+
+### Other audio
+
+When you press Play, music or video playing elsewhere on your computer
+(Spotify, Apple Music, Tidal, a YouTube tab in Chrome, Edge, Firefox or
+Safari, VLC…) is paused, and it plays again when you pause or stop the
+reading (**⏸**, **■**, or the end of the document). If you start something
+else in the meantime, that plays on and what was paused stays paused. The
+terminal running `npm start` notes each time, for example "Other audio:
+paused Spotify".
+
+The local server does the pausing (a web page cannot reach other apps), so
+it works with `npm start` and `npm run dev`, not in a copy hosted elsewhere.
+Each system is asked its own way:
+
+| System | Which players | Needs |
+| --- | --- | --- |
+| macOS | The app in **Now Playing** (Control Center): the one that played last | The Xcode command line tools, once, to build a small helper (`xcode-select --install`) |
+| Windows 10 / 11 | Every app in the media controls shown with the volume | Nothing (Windows PowerShell) |
+| Linux | Every MPRIS player (what the desktop's media controls show) | `dbus-send` (package `dbus`, on nearly every desktop) |
 
 ### Voices
 
@@ -270,12 +291,13 @@ On Windows, quote paths that contain spaces:
 index.html              page, top bar and player
 src/
   ui/                   app: rendering and controls (main.ts), highlight boxes,
-                        update pop-up and the session kept across updates
+                        update pop-up, the session kept across updates, and
+                        the request to pause other audio while reading
   speech/reader.ts      speaks one sentence at a time, maps word boundaries to the page
   speech/estimate.ts    reading-time estimate, learning each voice's speed
   engine/               PDF → reading units; plain TypeScript, no DOM
-scripts/                stable server and deploy, dictionary build,
-                        test-paper generator, inspect/audit tools
+scripts/                stable server and deploy, pausing other audio (media.mjs),
+                        dictionary build, test-paper generator, inspect/audit tools
 test/                   tests (Vitest) and the generated test paper
 ```
 
@@ -315,6 +337,7 @@ utterance and maps the voice's word-boundary events back to those boxes.
 | No voices in the Voice list | Wait a second after the page loads; otherwise install voices (see **Voices**) |
 | Sentences are highlighted but not single words | The selected voice doesn't report word positions; choose another |
 | A blank page after opening `dist/index.html` directly | Serve it over HTTP: `npm run preview` (see **Building for hosting**) |
+| Music is not paused when reading starts | Restart `npm start` after updating, reload the app, and look at the "Other audio" lines in its terminal. "found nothing playing": the player does not show in the system's media controls (see **Other audio**) |
 
 ---
 
