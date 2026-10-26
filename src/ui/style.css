@@ -762,9 +762,9 @@ body.dragging .empty {
   top: 0;
   z-index: 1;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
-  margin: 0 -12px 8px;
+  margin: 0 -12px 10px;
   padding: 14px 16px 10px;
   font-size: 12px;
   font-weight: 600;
@@ -775,18 +775,116 @@ body.dragging .empty {
   border-bottom: 1px solid var(--border);
 }
 
-#transcript h2 small {
-  font-size: 12px;
-  font-weight: 400;
+/* Sections | Pages */
+.summary-by {
+  height: 26px;
   letter-spacing: 0;
   text-transform: none;
-  color: var(--faint);
+}
+
+.summary-by > button {
+  height: 24px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.summary-by > button[aria-pressed='true'] {
+  color: var(--accent);
+  background: var(--accent-soft);
 }
 
 .transcript-empty {
   margin: 8px 4px;
   color: var(--faint);
   font-size: 13px;
+}
+
+/* One card per section (or page): its key sentences, then its full text. */
+#transcript .card {
+  margin: 0 0 8px;
+  padding: 10px 12px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+#transcript .card.level-2 {
+  margin-left: 14px;
+}
+
+#transcript .card.level-3 {
+  margin-left: 28px;
+}
+
+#transcript .card.current {
+  border-color: var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+button.card-title {
+  display: block;
+  height: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-weight: 650;
+  line-height: 1.35;
+  text-align: left;
+}
+
+button.card-title:hover:not(:disabled) {
+  background: none;
+  color: var(--accent);
+}
+
+.card-head small {
+  flex: none;
+  color: var(--faint);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+#transcript .key-sentences {
+  margin: 6px -8px 0;
+  padding: 0;
+  list-style: none;
+}
+
+#transcript .key-sentences li {
+  padding-left: 20px;
+}
+
+#transcript .key-sentences li::before {
+  content: '';
+  position: absolute;
+  left: 9px;
+  top: 0.95em;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--faint);
+}
+
+#transcript details summary {
+  width: fit-content;
+  margin-top: 4px;
+  color: var(--faint);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+#transcript details summary:hover {
+  color: var(--text);
+}
+
+#transcript details[open] summary {
+  margin-bottom: 4px;
 }
 
 #transcript ol {

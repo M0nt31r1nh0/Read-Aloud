@@ -6,12 +6,16 @@ import {
   approximateWidths,
   canvasWidths,
   extractPage,
+  keySentences,
+  pagesOf,
   parseDictionary,
+  sectionsOf,
   type AnalyzeOptions,
   type Dictionary,
   type DocumentAnalysis,
   type PageText,
   type Rect,
+  type Section,
 } from '../engine';
 import { SpeakingSpeed, countWords, formatDuration, wordsLeft } from '../speech/estimate';
 import { Reader, type ReaderState } from '../speech/reader';
@@ -511,6 +515,11 @@ function placeBox(page: number, r: Rect, className: string, pad: number) {
 
 function showSentence(unitIndex: number, start: number, end: number) {
   drawRects(unitIndex, start, end, 'sentence');
+  markTranscript(unitIndex, start, end);
+}
+
+/** The card being read, its key sentence while it is read, and the sentence in its full text. */
+function markTranscript(unitIndex: number, start: number, end: number) {
   unmarkTranscript();
   const li = transcriptEl.querySelector<HTMLLIElement>(`li[data-unit="${unitIndex}"]`);
   if (li) {
@@ -519,16 +528,38 @@ function showSentence(unitIndex: number, start: number, end: number) {
     mark.textContent = text.slice(start, end);
     li.classList.add('current');
     li.replaceChildren(text.slice(0, start), mark, text.slice(end));
-    if (following.transcript) revealIn(transcriptEl, li, 'nearest', 'auto');
   }
+  const card = transcriptEl.querySelector<HTMLElement>(`.card[data-group="${groupOf(unitIndex)}"]`);
+  card?.classList.add('current');
+  for (const key of card?.querySelectorAll<HTMLElement>('li[data-key-unit]') ?? []) {
+    const d = key.dataset;
+    if (Number(d.keyUnit) === unitIndex && Number(d.start) < end && Number(d.end) > start) key.classList.add('current');
+  }
+  const target = transcriptMark();
+  if (target && following.transcript) revealIn(transcriptEl, target, 'nearest', 'auto');
 }
 
-/** The reading-order entry being read goes back to plain text. */
+/** The summary shows nothing as being read; the full-text entry goes back to plain text. */
 function unmarkTranscript() {
-  for (const li of transcriptEl.querySelectorAll<HTMLElement>('li.current')) {
+  for (const el of transcriptEl.querySelectorAll<HTMLElement>('.card.current, li[data-key-unit].current')) el.classList.remove('current');
+  for (const li of transcriptEl.querySelectorAll<HTMLElement>('li[data-unit].current')) {
     li.classList.remove('current');
     li.textContent = analysis?.units[Number(li.dataset.unit)]?.text ?? li.textContent;
   }
+}
+
+/**
+ * What to keep in view in the summary while reading: the sentence in the full
+ * text if that is open, else the key sentence being read, else the card's title.
+ */
+function transcriptMark(): HTMLElement | null {
+  const card = transcriptEl.querySelector<HTMLElement>('.card.current');
+  if (!card) return null;
+  return (
+    card.querySelector<HTMLElement>('details[open] li.current') ??
+    card.querySelector<HTMLElement>('li[data-key-unit].current') ??
+    card.querySelector<HTMLElement>('.card-head')
+  );
 }
 
 /** The highlighted word, or the sentence while no word is. */
@@ -613,8 +644,8 @@ function followReading(reveal: boolean) {
   if (!reveal) return;
   const word = readingMark();
   if (word) revealIn(pagesEl, word, 'center', 'smooth');
-  const li = transcriptEl.querySelector<HTMLElement>('li.current');
-  if (li) revealIn(transcriptEl, li, 'nearest', 'smooth');
+  const mark = transcriptMark();
+  if (mark) revealIn(transcriptEl, mark, 'nearest', 'smooth');
 }
 
 /**
@@ -623,7 +654,7 @@ function followReading(reveal: boolean) {
  */
 function updateBackButton() {
   const word = readingMark();
-  const li = transcriptEl.querySelector<HTMLElement>('li.current');
+  const li = transcriptMark();
   const away = (container: HTMLElement, el: HTMLElement | null) => {
     if (!el) return 0;
     const view = container.getBoundingClientRect();
@@ -672,27 +703,130 @@ function revealIn(container: HTMLElement, el: HTMLElement, align: 'center' | 'ne
   container.scrollBy({ top: delta, behavior: Math.abs(delta) > container.clientHeight ? 'auto' : behavior });
 }
 
-// ---------- transcript and layout debug ----------
+// ---------- summary and layout debug ----------
+
+// The side panel sums up the paper section by section (or page by page): a
+// card per part with its key sentences, and its full text, in reading order,
+// folded away under it.
+type SummaryBy = 'sections' | 'pages';
+const SUMMARY_BY_KEY = 'read-aloud:summary-by';
+let summaryBy: SummaryBy = (() => {
+  try {
+    return localStorage.getItem(SUMMARY_BY_KEY) === 'pages' ? 'pages' : 'sections';
+  } catch {
+    return 'sections';
+  }
+})();
+/** The parts the summary shows, one card each. */
+let groups: Section[] = [];
+
+function groupOf(unitIndex: number) {
+  return groups.findIndex((g) => unitIndex >= g.first && unitIndex < g.end);
+}
+
+function readFrom(position: { unit: number; char: number }) {
+  followReading(false);
+  reader.play(position);
+}
 
 function renderTranscript() {
-  const list = document.createElement('ol');
-  analysis!.units.forEach((unit, i) => {
-    const li = document.createElement('li');
-    li.dataset.unit = String(i);
-    li.className = unit.kind;
-    li.textContent = unit.text;
-    li.title = `${unit.kind} · ${unit.sentences.length} sentence(s) · click to read from here`;
-    li.addEventListener('click', () => {
-      followReading(false);
-      reader.play({ unit: i, char: 0 });
-    });
-    list.append(li);
+  const units = analysis!.units;
+  const sections = sectionsOf(units);
+  // A paper without section headings is summed up page by page.
+  const hasSections = sections.length > 1;
+  const by: SummaryBy = hasSections ? summaryBy : 'pages';
+  groups = by === 'sections' ? sections : pagesOf(units);
+  // By page, the title part and the reference list are not summed up either.
+  const unsummarised = sections.filter((s) => s.kind === 'front' || s.kind === 'references');
+  const keys = keySentences(units, groups, (i) => by === 'pages' && unsummarised.some((s) => i >= s.first && i < s.end));
+
+  const cards = groups.map((group, k) => {
+    const card = document.createElement('section');
+    card.className = `card ${group.kind} level-${Math.min(group.level, 3)}`;
+    card.dataset.group = String(k);
+
+    const head = document.createElement('div');
+    head.className = 'card-head';
+    const title = document.createElement('button');
+    title.type = 'button';
+    title.className = 'card-title';
+    title.textContent = group.title;
+    title.title = 'Read from here';
+    title.addEventListener('click', () => readFrom({ unit: group.first, char: 0 }));
+    const pages = document.createElement('small');
+    const [from, to] = group.pages;
+    pages.textContent = from === to ? `p. ${from + 1}` : `pp. ${from + 1}–${to + 1}`;
+    head.append(title, pages);
+    card.append(head);
+
+    if (keys[k].length) {
+      const list = document.createElement('ul');
+      list.className = 'key-sentences';
+      for (const key of keys[k]) {
+        const li = document.createElement('li');
+        Object.assign(li.dataset, { keyUnit: String(key.unit), start: String(key.start), end: String(key.end) });
+        li.textContent = key.text;
+        li.title = 'Click to read from this sentence';
+        li.addEventListener('click', () => readFrom({ unit: key.unit, char: key.start }));
+        list.append(li);
+      }
+      card.append(list);
+    }
+
+    const details = document.createElement('details');
+    const summary = document.createElement('summary');
+    const count = group.end - group.first;
+    summary.textContent = `Full text · ${count} part${count === 1 ? '' : 's'}`;
+    const list = document.createElement('ol');
+    list.start = group.first + 1;
+    for (let i = group.first; i < group.end; i++) {
+      const unit = units[i];
+      const li = document.createElement('li');
+      li.dataset.unit = String(i);
+      li.className = unit.kind;
+      li.textContent = unit.text;
+      li.title = `${unit.kind} · ${unit.sentences.length} sentence(s) · click to read from here`;
+      li.addEventListener('click', () => readFrom({ unit: i, char: 0 }));
+      list.append(li);
+    }
+    details.append(summary, list);
+    card.append(details);
+    return card;
   });
+
   const heading = document.createElement('h2');
-  const count = document.createElement('small');
-  count.textContent = `${analysis!.units.length} parts`;
-  heading.append('Reading order', count);
-  transcriptEl.replaceChildren(heading, list);
+  const toggle = document.createElement('span');
+  toggle.className = 'segmented summary-by';
+  toggle.setAttribute('role', 'group');
+  toggle.setAttribute('aria-label', 'Summarise by');
+  for (const [value, label] of [
+    ['sections', 'Sections'],
+    ['pages', 'Pages'],
+  ] as const) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = label;
+    button.setAttribute('aria-pressed', String(by === value));
+    if (value === 'sections' && !hasSections) {
+      button.disabled = true;
+      button.title = 'No section headings were found in this PDF';
+    }
+    button.addEventListener('click', () => {
+      summaryBy = value;
+      try {
+        localStorage.setItem(SUMMARY_BY_KEY, value);
+      } catch {
+        // The choice is then not remembered; nothing else depends on it.
+      }
+      renderTranscript();
+      transcriptEl.scrollTop = 0;
+    });
+    toggle.append(button);
+  }
+  heading.append('Summary', toggle);
+  transcriptEl.replaceChildren(heading, ...cards);
+  // Switching between sections and pages while reading.
+  if (drawn.sentence) markTranscript(...drawn.sentence);
 }
 
 function renderLayout() {
@@ -1047,10 +1181,7 @@ void takeSession().then(async (session) => {
   updateBackButton();
 });
 
-/**
- * "20 pages · click any word to start there": the hint only while not
- * reading. (The number of parts is shown with the reading order.)
- */
+/** "20 pages · click any word to start there": the hint only while not reading. */
 function showReadyStatus(pages: number) {
   setStatus(`${pages} page${pages === 1 ? '' : 's'}${reader.state === 'playing' ? '' : ' · click any word to start there'}`);
   readyPages = pages;
